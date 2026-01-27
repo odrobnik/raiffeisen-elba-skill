@@ -11,7 +11,7 @@ from pathlib import Path
 from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent))
-from elba import load_credentials, login, URL_DOCUMENTS, PROFILE_DIR
+from elba import load_credentials, login, URL_DOCUMENTS, PROFILE_DIR, _get_bearer_token, _clear_cached_token
 
 try:
     from playwright.sync_api import sync_playwright
@@ -107,8 +107,8 @@ def fetch_products(token, cookies):
         print(f"[api] Error: {e}", flush=True)
         return None
 
-def fetch_transactions(token, cookies, iban, date_from, date_to, limit=3001):
-    """Fetch transactions for a specific IBAN and date range"""
+def fetch_transactions(token, cookies, iban, date_from, date_to, limit=3001, id_bis=None, neuanlage_bis=None):
+    """Fetch a page of transactions for a specific IBAN and date range"""
     url = "https://mein.elba.raiffeisen.at/api/bankingzv-umsatz/umsatz-ui/rest/kontoumsaetze"
     
     headers = {
@@ -122,8 +122,8 @@ def fetch_transactions(token, cookies, iban, date_from, date_to, limit=3001):
         "predicate": {
             "buchungVon": f"{date_from}T00:00:00.000",
             "buchungBis": f"{date_to}T23:59:59.999",
-            "neuanlageBis": None,
-            "idBis": None,
+            "neuanlageBis": neuanlage_bis,
+            "idBis": id_bis,
             "betragVon": None,
             "betragBis": None,
             "betragsrichtung": "BEIDE",
@@ -145,14 +145,93 @@ def fetch_transactions(token, cookies, iban, date_from, date_to, limit=3001):
         if response.status_code == 200:
             data = response.json()
             transactions = data.get('kontoumsaetze', [])
+            if not transactions:
+                transactions = data.get('list', [])
             print(f"[api] Received {len(transactions)} transactions", flush=True)
-            return transactions
+            return data, transactions, response.status_code
         else:
             print(f"[api] Request failed with status {response.status_code}: {response.text}", flush=True)
-            return None
+            return {"error": response.text}, None, response.status_code
     except Exception as e:
         print(f"[api] Error: {e}", flush=True)
-        return None
+        return None, None, None
+
+def _get_next_cursor(data, transactions):
+    if isinstance(data, dict):
+        next_id = data.get('idBis') or data.get('nextIdBis')
+        next_neuanlage = data.get('neuanlageBis') or data.get('nextNeuanlageBis')
+        if next_id or next_neuanlage:
+            return next_id, next_neuanlage
+    
+    if not transactions:
+        return None, None
+    
+    last = transactions[-1]
+    next_id = last.get('id') if isinstance(last, dict) else None
+    
+    candidate_keys = [
+        'neuanlageBis',
+        'neuanlage',
+        'neuanlageZeitpunkt',
+        'neuanlageTimestamp',
+        'neuanlageDatum',
+    ]
+    next_neuanlage = None
+    if isinstance(last, dict):
+        for key in candidate_keys:
+            if last.get(key) is not None:
+                next_neuanlage = last.get(key)
+                break
+    
+    return next_id, next_neuanlage
+
+def fetch_transactions_all(token, cookies, iban, date_from, date_to, limit=3001):
+    """Fetch all transactions with pagination."""
+    all_transactions = []
+    id_bis = None
+    neuanlage_bis = None
+    page = 1
+    
+    while True:
+        print(f"[api] Fetching page {page}...", flush=True)
+        data, transactions, status_code = fetch_transactions(
+            token,
+            cookies,
+            iban,
+            date_from,
+            date_to,
+            limit=limit,
+            id_bis=id_bis,
+            neuanlage_bis=neuanlage_bis
+        )
+        
+        if transactions is None:
+            return None, status_code
+        
+        if not transactions:
+            break
+        
+        all_transactions.extend(transactions)
+        
+        info = data.get('info') if isinstance(data, dict) else None
+        has_more = info.get('hasMore') if isinstance(info, dict) else None
+        if has_more is False or len(transactions) < limit:
+            break
+        
+        next_id, next_neuanlage = _get_next_cursor(data, transactions)
+        if not next_id and not next_neuanlage:
+            print("[api] WARNING: No pagination cursor found; stopping to avoid duplicates.", flush=True)
+            break
+        
+        if next_id == id_bis and next_neuanlage == neuanlage_bis:
+            print("[api] WARNING: Pagination cursor did not advance; stopping.", flush=True)
+            break
+        
+        id_bis = next_id
+        neuanlage_bis = next_neuanlage
+        page += 1
+    
+    return all_transactions, 200
 
 def export_to_csv(transactions, output_file):
     """Export transactions to CSV"""
@@ -220,7 +299,7 @@ def main():
     parser.add_argument('--list-accounts', action='store_true', help='List all accounts and exit')
     parser.add_argument('--iban', help='IBAN to fetch transactions for')
     parser.add_argument('--from', dest='date_from', help='Start date (YYYY-MM-DD)')
-    parser.add_argument('--to', dest='date_to', help='End date (YYYY-MM-DD)')
+    parser.add_argument('--until', dest='date_to', help='End date (YYYY-MM-DD)')
     parser.add_argument('--format', choices=['csv', 'json', 'both'], default='both', help='Export format')
     parser.add_argument('--output', help='Output filename (without extension)')
     
@@ -229,7 +308,7 @@ def main():
     # Validate arguments
     if not args.list_accounts:
         if not args.iban or not args.date_from or not args.date_to:
-            parser.error('--iban, --from, and --to are required (unless --list-accounts is used)')
+            parser.error('--iban, --from, and --until are required (unless --list-accounts is used)')
     
     # Continue with existing validation
     if args.date_from and args.date_to:
@@ -264,24 +343,23 @@ def main():
         page = context.new_page()
         
         try:
-            # Login
-            print("[main] Logging in to get token...")
-            page.goto(URL_DOCUMENTS, wait_until="networkidle")
+            # Try to reuse session/token first
+            print("[main] Attempting to access documents (reuse session)...")
+            page.goto(URL_DOCUMENTS, wait_until="domcontentloaded")
             time.sleep(3)
             
-            if "sso.raiffeisen.at" in page.url or "mein-login" in page.url:
-                print("[main] Performing login...")
+            token = _get_bearer_token(context, page)
+            if not token:
+                print("[main] Token not found, performing login...")
                 if not login(page, elba_id, pin):
                     print("[main] Login failed")
                     sys.exit(1)
+                token = _get_bearer_token(context, page)
             
-            # Get bearer token
-            token = get_bearer_token_from_browser(page)
             if not token:
                 print("[main] ERROR: Could not extract bearer token")
                 sys.exit(1)
             
-            # Get cookies
             cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
             
             # Handle --list-accounts
@@ -312,7 +390,20 @@ def main():
                 sys.exit(0)
             
             # Fetch transactions
-            transactions = fetch_transactions(token, cookies, args.iban, args.date_from, args.date_to)
+            transactions, status_code = fetch_transactions_all(token, cookies, args.iban, args.date_from, args.date_to)
+            
+            if transactions is None and status_code == 401:
+                print("[main] Token rejected (401). Clearing cache and re-authenticating...", flush=True)
+                _clear_cached_token()
+                if not login(page, elba_id, pin):
+                    print("[main] Login failed")
+                    sys.exit(1)
+                token = _get_bearer_token(context, page)
+                if not token:
+                    print("[main] ERROR: Could not extract bearer token")
+                    sys.exit(1)
+                cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
+                transactions, status_code = fetch_transactions_all(token, cookies, args.iban, args.date_from, args.date_to)
             
             if transactions is None:
                 print("[main] Failed to fetch transactions")

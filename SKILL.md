@@ -1,7 +1,7 @@
 ---
 name: raiffeisen-elba
-description: "Automate Raiffeisen ELBA online banking using Playwright: login/session (pushTAN 2FA approval), list accounts + balances. Use when the user mentions ELBA, Raiffeisen, or Austrian Raiffeisen banking."
-summary: "Raiffeisen ELBA banking automation: login, accounts, and balances."
+description: "Automate Raiffeisen ELBA online banking using Playwright: login/session (pushTAN 2FA approval), list accounts, download documents, and fetch transactions via API. Use when the user mentions ELBA, Raiffeisen, or Austrian Raiffeisen banking."
+summary: "Raiffeisen ELBA banking automation: login, accounts, documents, and transactions."
 version: 1.0.0
 homepage: https://github.com/clawdbot-skills/raiffeisen-elba
 metadata: {"clawdbot":{"emoji":"🏦","requires":{"bins":["python3","playwright"]}}}
@@ -37,7 +37,7 @@ python3 {baseDir}/scripts/elba.py logout            # Clear session
 
 Session is persisted in `~/.clawdbot/raiffeisen-elba/.pw-profile/`.
 
-**Note:** ELBA sessions don't persist between browser sessions, so most commands will automatically log in if needed.
+**Note:** Sessions and API tokens are cached in the Playwright profile and reused when possible.
 
 ### Accounts
 
@@ -47,7 +47,7 @@ python3 {baseDir}/scripts/elba.py accounts --visible # Show browser while fetchi
 python3 {baseDir}/scripts/elba.py accounts --json    # Output as JSON
 ```
 
-The `accounts` command will automatically perform login with pushTAN 2FA if not already authenticated.
+The `accounts` command will reuse a cached API token when available and only log in (pushTAN 2FA) if needed.
 
 Shows:
 - Account type (Giro, Depot, Kredit, etc.)
@@ -64,8 +64,8 @@ python3 {baseDir}/scripts/elba.py download --visible          # Show browser whi
 python3 {baseDir}/scripts/elba.py download -o ~/docs          # Save to specific directory
 python3 {baseDir}/scripts/elba.py download --json             # Output document list as JSON
 python3 {baseDir}/scripts/elba.py download --from 01.01.2026  # Filter by start date
-python3 {baseDir}/scripts/elba.py download --to 31.01.2026    # Filter by end date
-python3 {baseDir}/scripts/elba.py download --from 01.01.2026 --to 31.01.2026  # Date range
+python3 {baseDir}/scripts/elba.py download --until 31.01.2026    # Filter by end date
+python3 {baseDir}/scripts/elba.py download --from 01.01.2026 --until 31.01.2026  # Date range
 ```
 
 Downloads documents (PDFs) from the ELBA mailbox/documents section. Each document includes:
@@ -77,6 +77,23 @@ Downloads documents (PDFs) from the ELBA mailbox/documents section. Each documen
 Date format: DD.MM.YYYY (e.g., 17.01.2026)
 
 Default save location: `~/clawd/raiffeisen-elba/documents`
+
+### Transactions
+
+```bash
+python3 {baseDir}/scripts/elba.py transactions --iban AT063293900008601411 --from 2025-01-01 --until 2025-12-31 --format json
+python3 {baseDir}/scripts/elba.py transactions --iban AT063293900008601411 --from 2025-01-01 --until 2025-12-31 --format csv
+python3 {baseDir}/scripts/elba.py transactions --iban AT063293900008601411 --from 2025-01-01 --until 2025-12-31 --format both
+python3 {baseDir}/scripts/elba.py transactions --iban AT063293900008601411 --from 2025-01-01 --until 2025-12-31 --output /path/to/transactions_2025
+```
+
+The `transactions` command reuses cached API tokens and paginates until all results are retrieved.
+Date format: YYYY-MM-DD.
+
+## References
+
+- `references/accounts.schema.json`
+- `references/transactions.schema.json`
 
 ## Security notes
 

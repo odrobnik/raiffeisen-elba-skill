@@ -607,6 +607,13 @@ def _save_cached_token(token):
     except Exception:
         pass
 
+def _clear_cached_token():
+    try:
+        if TOKEN_CACHE_FILE.exists():
+            TOKEN_CACHE_FILE.unlink()
+    except Exception:
+        pass
+
 def _extract_bearer_token_from_storage_state(context):
     try:
         state = context.storage_state()
@@ -1264,7 +1271,173 @@ def cmd_download(headless=True, output_dir=None, date_from=None, date_to=None, j
         finally:
             context.close()
 
+def cmd_transactions(headless=True, iban=None, date_from=None, date_to=None, output=None, fmt="json"):
+    """Download transactions for a single IBAN (logs in automatically if needed)."""
+    if not iban or not date_from or not date_to:
+        print("Missing required arguments: --iban, --from, --until")
+        sys.exit(1)
+    
+    elba_id, pin = load_credentials()
+    if not elba_id or not pin:
+        print("Credentials not found. Run 'setup' first.")
+        sys.exit(1)
+    
+    if not PROFILE_DIR.exists():
+        PROFILE_DIR.mkdir(parents=True)
+    
+    from download_transactions import fetch_transactions_all, export_to_csv, export_to_json
+    
+    with sync_playwright() as p:
+        context = p.chromium.launch_persistent_context(
+            user_data_dir=str(PROFILE_DIR),
+            headless=headless,
+            viewport={"width": 1280, "height": 800}
+        )
+        
+        page = context.new_page()
+        try:
+            print("[transactions] Attempting to access documents (reuse session)...")
+            page.goto(URL_DOCUMENTS, wait_until="domcontentloaded")
+            time.sleep(2)
+            
+            token = _get_bearer_token(context, page)
+            if not token:
+                print("[transactions] Token not found, performing login...")
+                if not login(page, elba_id, pin):
+                    print("[transactions] Login failed.")
+                    sys.exit(1)
+                token = _get_bearer_token(context, page)
+            
+            if not token:
+                print("[transactions] ERROR: Could not extract bearer token")
+                sys.exit(1)
+            
+            cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
+            transactions, status_code = fetch_transactions_all(token, cookies, iban, date_from, date_to)
+            
+            if transactions is None and status_code == 401:
+                print("[transactions] Token rejected (401). Clearing cache and re-authenticating...", flush=True)
+                _clear_cached_token()
+                if not login(page, elba_id, pin):
+                    print("[transactions] Login failed.")
+                    sys.exit(1)
+                token = _get_bearer_token(context, page)
+                if not token:
+                    print("[transactions] ERROR: Could not extract bearer token")
+                    sys.exit(1)
+                cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
+                transactions, status_code = fetch_transactions_all(token, cookies, iban, date_from, date_to)
+            
+            if transactions is None:
+                print("[transactions] Failed to fetch transactions")
+                sys.exit(1)
+            
+            if len(transactions) == 0:
+                print("[transactions] No transactions found in date range")
+                sys.exit(0)
+            
+            if not output:
+                output = f"transactions_{iban.replace('AT', '')}_{date_from}_{date_to}"
+            
+            if fmt in ["csv", "both"]:
+                export_to_csv(transactions, Path(f"{output}.csv"))
+            if fmt in ["json", "both"]:
+                pruned = [_prune_none(tx) for tx in transactions]
+                pruned = [tx for tx in pruned if tx is not None]
+                export_to_json(pruned, Path(f"{output}.json"))
+            
+            print("[transactions] Export complete")
+        finally:
+            context.close()
 
+def _fetch_portfolio(token, cookies, depot_id, as_of_date=None):
+    base_url = "https://mein.elba.raiffeisen.at/api/bankingwp-depotzentrale/depotzentrale-ui/rest/positionsuebersicht"
+    if as_of_date:
+        url = f"{base_url}/{depot_id}/{as_of_date}"
+    else:
+        url = f"{base_url}/{depot_id}"
+    
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Authorization": f"Bearer {token}",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3 Safari/605.1.15"
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, cookies=cookies)
+        if response.status_code == 200:
+            return response.json(), response.status_code
+        return {"error": response.text}, response.status_code
+    except Exception as e:
+        return {"error": str(e)}, None
+
+def cmd_portfolio(headless=True, depot_id=None, as_of_date=None, json_output=False):
+    """Fetch depot portfolio positions."""
+    if not depot_id:
+        print("Missing required argument: --depot-id")
+        sys.exit(1)
+    
+    elba_id, pin = load_credentials()
+    if not elba_id or not pin:
+        print("Credentials not found. Run 'setup' first.")
+        sys.exit(1)
+    
+    if not PROFILE_DIR.exists():
+        PROFILE_DIR.mkdir(parents=True)
+    
+    with sync_playwright() as p:
+        context = p.chromium.launch_persistent_context(
+            user_data_dir=str(PROFILE_DIR),
+            headless=headless,
+            viewport={"width": 1280, "height": 800}
+        )
+        
+        page = context.new_page()
+        try:
+            print("[portfolio] Attempting to access documents (reuse session)...")
+            page.goto(URL_DOCUMENTS, wait_until="domcontentloaded")
+            time.sleep(2)
+            
+            token = _get_bearer_token(context, page)
+            if not token:
+                print("[portfolio] Token not found, performing login...")
+                if not login(page, elba_id, pin):
+                    print("[portfolio] Login failed.")
+                    sys.exit(1)
+                token = _get_bearer_token(context, page)
+            
+            if not token:
+                print("[portfolio] ERROR: Could not extract bearer token")
+                sys.exit(1)
+            
+            cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
+            data, status_code = _fetch_portfolio(token, cookies, depot_id, as_of_date)
+            
+            if status_code == 401:
+                print("[portfolio] Token rejected (401). Clearing cache and re-authenticating...", flush=True)
+                _clear_cached_token()
+                if not login(page, elba_id, pin):
+                    print("[portfolio] Login failed.")
+                    sys.exit(1)
+                token = _get_bearer_token(context, page)
+                if not token:
+                    print("[portfolio] ERROR: Could not extract bearer token")
+                    sys.exit(1)
+                cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
+                data, status_code = _fetch_portfolio(token, cookies, depot_id, as_of_date)
+            
+            if status_code != 200:
+                print("[portfolio] Failed to fetch portfolio")
+                print(json.dumps(data, ensure_ascii=False, indent=2))
+                sys.exit(1)
+            
+            pruned = _prune_none(data)
+            if json_output:
+                print(json.dumps(pruned, ensure_ascii=False, indent=2))
+            else:
+                print(json.dumps(pruned, ensure_ascii=False, indent=2))
+        finally:
+            context.close()
 def main():
     parser = argparse.ArgumentParser(description="Raiffeisen ELBA Automation")
     subparsers = parser.add_subparsers(dest="command")
@@ -1285,7 +1458,21 @@ def main():
     download_parser.add_argument("--json", action="store_true", help="Output as JSON")
     download_parser.add_argument("-o", "--output", help="Output directory for documents")
     download_parser.add_argument("--from", dest="date_from", help="Start date (DD.MM.YYYY)")
-    download_parser.add_argument("--to", dest="date_to", help="End date (DD.MM.YYYY)")
+    download_parser.add_argument("--until", dest="date_to", help="End date (DD.MM.YYYY)")
+    
+    transactions_parser = subparsers.add_parser("transactions", help="Download transactions for an IBAN")
+    transactions_parser.add_argument("--visible", action="store_true", help="Show browser")
+    transactions_parser.add_argument("--iban", required=True, help="IBAN to fetch transactions for")
+    transactions_parser.add_argument("--from", dest="date_from", required=True, help="Start date (YYYY-MM-DD)")
+    transactions_parser.add_argument("--until", dest="date_to", required=True, help="End date (YYYY-MM-DD)")
+    transactions_parser.add_argument("--format", dest="fmt", choices=["csv", "json", "both"], default="json", help="Output format")
+    transactions_parser.add_argument("--output", help="Output file base name (without extension)")
+    
+    portfolio_parser = subparsers.add_parser("portfolio", help="Fetch depot portfolio positions")
+    portfolio_parser.add_argument("--visible", action="store_true", help="Show browser")
+    portfolio_parser.add_argument("--depot-id", dest="depot_id", required=True, help="Depot ID (e.g., 3293966252586)")
+    portfolio_parser.add_argument("--date", dest="as_of_date", help="As-of date (YYYY-MM-DD)")
+    portfolio_parser.add_argument("--json", action="store_true", help="Output as JSON")
     
     subparsers.add_parser("balances", help="List balances")
     
@@ -1305,6 +1492,22 @@ def main():
             output_dir=getattr(args, 'output', None),
             date_from=getattr(args, 'date_from', None),
             date_to=getattr(args, 'date_to', None),
+            json_output=getattr(args, 'json', False)
+        )
+    elif args.command == "transactions":
+        cmd_transactions(
+            headless=not getattr(args, 'visible', False),
+            iban=getattr(args, 'iban', None),
+            date_from=getattr(args, 'date_from', None),
+            date_to=getattr(args, 'date_to', None),
+            output=getattr(args, 'output', None),
+            fmt=getattr(args, 'fmt', "json")
+        )
+    elif args.command == "portfolio":
+        cmd_portfolio(
+            headless=not getattr(args, 'visible', False),
+            depot_id=getattr(args, 'depot_id', None),
+            as_of_date=getattr(args, 'as_of_date', None),
             json_output=getattr(args, 'json', False)
         )
     elif args.command == "balances":

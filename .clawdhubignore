@@ -8,3 +8,5 @@ README.md
 # Local secrets
 tokens-*.json
 secrets/
+!references/
+!references/*.json
