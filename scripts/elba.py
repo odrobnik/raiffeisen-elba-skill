@@ -773,6 +773,12 @@ def _get_bearer_token(context, page):
     
     page.route('**/api/**', handle_request)
     try:
+        # Force a fresh navigation so the SPA triggers API calls (cache can short-circuit).
+        try:
+            page.goto("about:blank")
+        except Exception:
+            pass
+
         # networkidle is brittle for SPA apps; use domcontentloaded with a timeout.
         page.goto(URL_DASHBOARD, wait_until="domcontentloaded", timeout=15000)
     except Exception:
