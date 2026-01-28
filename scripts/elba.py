@@ -28,6 +28,7 @@ CREDENTIALS_FILE = CREDENTIALS_DIR / ".env"
 PROFILE_DIR = Path.home() / ".clawdbot" / "raiffeisen-elba" / ".pw-profile"
 SESSION_URL_FILE = PROFILE_DIR / "last_url.txt"
 TOKEN_CACHE_FILE = PROFILE_DIR / "token.json"
+DEBUG_DIR = Path.home() / ".clawdbot" / "raiffeisen-elba" / "debug"
 
 URL_LOGIN = "https://sso.raiffeisen.at/mein-login/identify"
 URL_DASHBOARD = "https://mein.elba.raiffeisen.at/bankingws-widgetsystem/meine-produkte/dashboard"
@@ -59,6 +60,106 @@ def load_credentials():
                 config[key] = value.strip().strip("'").strip('"')
     
     return config.get('ELBA_ID'), config.get('ELBA_PIN')
+
+
+
+def _now_iso_local() -> str:
+    from datetime import datetime
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _ensure_dir(p: Path) -> None:
+    p.mkdir(parents=True, exist_ok=True)
+
+
+def _write_debug_json(prefix: str, payload) -> Path:
+    _ensure_dir(DEBUG_DIR)
+    from datetime import datetime
+    ts = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    out = DEBUG_DIR / f"{ts}-{prefix}.json"
+    out.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+    return out
+
+
+def _eu_amount(amount: float | None) -> str:
+    if amount is None:
+        return "N/A"
+    s = f"{amount:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return s
+
+
+def _canonical_account_type_elba(raw_type: str | None) -> str:
+    t = (raw_type or "").lower()
+    # ELBA 'type' here is UI label (e.g. Giro, Sparkonto, Kredit, Depot)
+    if 'depot' in t:
+        return 'depot'
+    if 'giro' in t or 'konto' in t:
+        return 'checking'
+    if 'spar' in t:
+        return 'savings'
+    if 'kredit' in t or 'loan' in t:
+        return 'loan'
+    return 'other'
+
+
+def canonicalize_accounts_elba(accounts: list[dict], raw_path: Path | None = None) -> dict:
+    out_accounts = []
+    for a in accounts or []:
+        if not isinstance(a, dict):
+            continue
+        name = a.get('name') or 'N/A'
+        iban = a.get('iban')
+        typ = _canonical_account_type_elba(a.get('type'))
+
+        currency = None
+        # Determine currency from balance/value object
+        for key in ('balance','available','value'):
+            v = a.get(key)
+            if isinstance(v, dict):
+                currency = v.get('currencyCode') or v.get('currency')
+                if currency:
+                    break
+        currency = (currency or 'EUR').strip()
+
+        balances = None
+        securities = None
+
+        if a.get('type') == 'Depot' or typ == 'depot':
+            v = a.get('value') if isinstance(a.get('value'), dict) else None
+            pl = a.get('profit_loss') if isinstance(a.get('profit_loss'), dict) else None
+            securities = {
+                'value': {'amount': v.get('amount'), 'currency': currency} if v and v.get('amount') is not None else None,
+                'profitLoss': {
+                    'amount': pl.get('amount'),
+                    'currency': (pl.get('currencyCode') or currency) if pl else currency,
+                    'percent': pl.get('percent')
+                } if pl else None
+            }
+        else:
+            b = a.get('balance') if isinstance(a.get('balance'), dict) else None
+            av = a.get('available') if isinstance(a.get('available'), dict) else None
+            balances = {
+                'booked': {'amount': b.get('amount'), 'currency': currency} if b and b.get('amount') is not None else None,
+                'available': {'amount': av.get('amount'), 'currency': currency} if av and av.get('amount') is not None else None,
+            }
+
+        out_accounts.append({
+            'id': iban or name,
+            'type': typ,
+            'name': name,
+            'iban': iban,
+            'currency': currency,
+            'balances': balances,
+            'securities': securities,
+        })
+
+    return {
+        'institution': 'elba',
+        'fetchedAt': _now_iso_local(),
+        'rawPath': str(raw_path) if raw_path else None,
+        'accounts': out_accounts,
+    }
+
 
 def get_region_name(elba_id):
     """Determine region name from ELBA_ID prefix."""
@@ -829,26 +930,33 @@ def _product_to_account(product):
     }
 
 def fetch_accounts_api(token, cookies):
-    """Fetch accounts via products API."""
+    """Fetch accounts via products API.
+
+    Returns: (accounts, raw_path) where raw_path points to the bank-native products JSON.
+    """
     url = "https://mein.elba.raiffeisen.at/api/bankingws-widgetsystem/bankingws-ui/rest/produkte?skipImages=true"
-    
+
     headers = {
         "Accept": "application/json, text/plain, */*",
         "Authorization": f"Bearer {token}",
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3 Safari/605.1.15"
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3 Safari/605.1.15",
     }
-    
+
     print("[api] Fetching products...", flush=True)
-    
+
     try:
         response = requests.get(url, headers=headers, cookies=cookies)
         if response.status_code == 200:
             products = response.json()
             print(f"[api] Found {len(products)} products", flush=True)
-            return [_product_to_account(p) for p in products]
-        
+            raw_path = _write_debug_json("products-raw", products)
+            return ([_product_to_account(p) for p in products], raw_path)
+
         print(f"[api] Request failed with status {response.status_code}: {response.text}", flush=True)
-        return None
+        return (None, None)
+    except Exception as e:
+        print(f"[api] Error: {e}", flush=True)
+        return (None, None)
     except Exception as e:
         print(f"[api] Error: {e}", flush=True)
         return None
@@ -1115,6 +1223,7 @@ def cmd_accounts(headless=True, json_output=False):
         )
         
         page = context.new_page()
+        raw_path = None
         
         try:
             # Try to use existing session first (no forced login)
@@ -1143,7 +1252,7 @@ def cmd_accounts(headless=True, json_output=False):
             accounts = None
             if token:
                 cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
-                accounts = fetch_accounts_api(token, cookies)
+                accounts, raw_path = fetch_accounts_api(token, cookies)
             
             # If API failed, then login and retry once
             if accounts is None:
@@ -1155,7 +1264,7 @@ def cmd_accounts(headless=True, json_output=False):
                 token = _get_bearer_token(context, page)
                 if token:
                     cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
-                    accounts = fetch_accounts_api(token, cookies)
+                    accounts, raw_path = fetch_accounts_api(token, cookies)
             
             if accounts is None:
                 print("[accounts] WARNING: API unavailable, falling back to scraping.")
@@ -1230,6 +1339,7 @@ def cmd_download(headless=True, output_dir=None, date_from=None, date_to=None, j
         )
         
         page = context.new_page()
+        raw_path = None
         
         try:
             # Try to navigate to documents first
