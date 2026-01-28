@@ -6,6 +6,8 @@ Automates login and basic data retrieval for Raiffeisen ELBA (Austria).
 """
 
 import sys
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
 import os
 import time
 import re
@@ -23,6 +25,9 @@ except ImportError:
     sys.exit(1)
 
 # --- Configuration ---
+DEFAULT_LOGIN_TIMEOUT = 180  # seconds
+LOGIN_TIMEOUT = DEFAULT_LOGIN_TIMEOUT
+
 BASE_DIR = Path(__file__).parent.parent
 CREDENTIALS_DIR = Path.home() / "clawd" / "raiffeisen-elba"
 CREDENTIALS_FILE = CREDENTIALS_DIR / ".env"
@@ -179,8 +184,11 @@ def get_region_name(elba_id):
     
     return None
 
-def login(page, elba_id, pin):
+def login(page, elba_id, pin, timeout_seconds: int | None = None):
     """Perform the login flow."""
+    # Allow runtime override via global LOGIN_TIMEOUT
+    if timeout_seconds is None:
+        timeout_seconds = LOGIN_TIMEOUT
     print(f"[login] Navigating to {URL_LOGIN}...")
     page.goto(URL_LOGIN)
     
@@ -306,7 +314,7 @@ def login(page, elba_id, pin):
     # 4. Wait for success or error
     print("[login] Waiting for navigation to dashboard...")
     start_time = time.time()
-    while time.time() - start_time < 120: # 2 minute timeout for approval
+    while time.time() - start_time < max(int(timeout_seconds), 1):  # timeout for pushTAN approval
         # Check for service unavailable (skip if page is still navigating)
         try:
             page_content = page.content()
@@ -1220,7 +1228,7 @@ def cmd_login(headless=True):
         
         page = context.new_page()
         try:
-            if login(page, elba_id, pin):
+            if login(page, elba_id, pin, timeout_seconds=LOGIN_TIMEOUT):
                 print("Session saved.")
             else:
                 sys.exit(1)
@@ -1298,7 +1306,7 @@ def cmd_accounts(headless=True, json_output=False):
             # If API failed, then login and retry once
             if accounts is None:
                 print("[accounts] API request failed or no token; performing login...")
-                if not login(page, elba_id, pin):
+                if not login(page, elba_id, pin, timeout_seconds=LOGIN_TIMEOUT):
                     print("[accounts] Login failed.")
                     sys.exit(1)
 
@@ -1404,7 +1412,7 @@ def cmd_download(headless=True, output_dir=None, date_from=None, date_to=None, j
             # Check if we got redirected to login
             if "sso.raiffeisen.at" in page.url or "mein-login" in page.url:
                 print("[download] Not logged in, performing login...")
-                if not login(page, elba_id, pin):
+                if not login(page, elba_id, pin, timeout_seconds=LOGIN_TIMEOUT):
                     print("[download] Login failed.")
                     sys.exit(1)
                 # After successful login, navigate to documents
@@ -1426,12 +1434,103 @@ def cmd_download(headless=True, output_dir=None, date_from=None, date_to=None, j
         finally:
             context.close()
 
+def _first_nonempty(*vals: object) -> str | None:
+    for v in vals:
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return None
+
+
+def _canonicalize_elba_transaction(tx: dict) -> dict:
+    """Map ELBA kontoumsaetze transaction into the canonical transaction schema."""
+    out: dict = {"status": "booked"}
+
+    tid = tx.get("id")
+    if tid is not None:
+        out["id"] = str(tid)
+
+    bd = tx.get("buchungstag")
+    if isinstance(bd, str) and len(bd) >= 10:
+        out["bookingDate"] = bd[:10]
+
+    vd = tx.get("valuta")
+    if isinstance(vd, str) and len(vd) >= 10:
+        out["valueDate"] = vd[:10]
+
+    betrag = tx.get("betrag")
+    if isinstance(betrag, dict):
+        amt = betrag.get("amount")
+        cur = betrag.get("currencyCode") or betrag.get("currency")
+        if isinstance(amt, (int, float)) and isinstance(cur, str) and cur:
+            out["amount"] = {"amount": float(amt), "currency": cur}
+
+    # counterparty
+    cp_name = _first_nonempty(
+        tx.get("transaktionsteilnehmer"),
+        tx.get("transaktionsteilnehmerZeile1"),
+        tx.get("transaktionsteilnehmerZeile2u3"),
+        tx.get("auftraggeberInformation"),
+    )
+    cp: dict = {}
+    if cp_name:
+        cp["name"] = cp_name
+
+    cp_iban = tx.get("auftraggeberIban")
+    if isinstance(cp_iban, str) and cp_iban.strip():
+        cp["iban"] = cp_iban.strip()
+
+    cp_bic = tx.get("auftraggeberBic")
+    if isinstance(cp_bic, str) and cp_bic.strip():
+        cp["bic"] = cp_bic.strip()
+
+    if cp:
+        out["counterparty"] = cp
+
+    # description/purpose
+    desc = _first_nonempty(tx.get("auftragskurzVerwendungszweck"), tx.get("verwendungszweckZeile1"))
+    purpose_parts = [
+        tx.get("verwendungszweckZeile1"),
+        tx.get("verwendungszweckZeile2"),
+        tx.get("verwendungszweckZeile3"),
+    ]
+    purpose = " ".join([p.strip() for p in purpose_parts if isinstance(p, str) and p.strip()])
+
+    if desc:
+        out["description"] = desc
+    if purpose:
+        out["purpose"] = purpose
+
+    # references
+    refs: dict = {}
+    zr = tx.get("zahlungsreferenz")
+    if isinstance(zr, str) and zr.strip():
+        refs["paymentReference"] = zr.strip()
+
+    br = tx.get("bestandreferenz") or tx.get("ersterfasserreferenz")
+    if isinstance(br, str) and br.strip():
+        refs["bankReference"] = br.strip()
+
+    mandate = tx.get("mandatsreferenz")
+    if isinstance(mandate, str) and mandate.strip():
+        refs["mandateId"] = mandate.strip()
+
+    if refs:
+        out["references"] = refs
+
+    # category
+    cat = tx.get("kategorieCode")
+    if isinstance(cat, str) and cat.strip():
+        out["category"] = {"code": cat.strip()}
+
+    return out
+
+
 def cmd_transactions(headless=True, account=None, date_from=None, date_to=None, output=None, fmt="json"):
     """Download transactions for an account (logs in automatically if needed)."""
     if not account or not date_from or not date_to:
         print("Missing required arguments: --account, --from, --until")
         sys.exit(1)
-    
+
     # ISO date validation
     try:
         datetime.strptime(date_from, "%Y-%m-%d")
@@ -1444,46 +1543,45 @@ def cmd_transactions(headless=True, account=None, date_from=None, date_to=None, 
     if not elba_id or not pin:
         print("Credentials not found. Run 'setup' first.")
         sys.exit(1)
-    
+
     if not PROFILE_DIR.exists():
         PROFILE_DIR.mkdir(parents=True)
-    
-    from download_transactions import fetch_transactions_all, export_to_csv, export_to_json
-    
+
+    from download_transactions import fetch_transactions_all
+
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
             user_data_dir=str(PROFILE_DIR),
             headless=headless,
-            viewport={"width": 1280, "height": 800}
+            viewport={"width": 1280, "height": 800},
         )
-        
+
         page = context.new_page()
         try:
             print("[transactions] Attempting to access documents (reuse session)...")
             page.goto(URL_DOCUMENTS, wait_until="domcontentloaded")
             time.sleep(2)
-            
+
             token = _get_bearer_token(context, page)
             if not token:
                 print("[transactions] Token not found, performing login...")
-                if not login(page, elba_id, pin):
+                if not login(page, elba_id, pin, timeout_seconds=LOGIN_TIMEOUT):
                     print("[transactions] Login failed.")
                     sys.exit(1)
                 token = _get_bearer_token(context, page)
-            
+
             if not token:
                 print("[transactions] ERROR: Could not extract bearer token")
                 sys.exit(1)
-            
+
             cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
-            
-            # Note: elba.py uses 'iban' internally for fetch_transactions_all, so we pass 'account' as 'iban'
+
             transactions, status_code = fetch_transactions_all(token, cookies, account, date_from, date_to)
-            
+
             if transactions is None and status_code == 401:
                 print("[transactions] Token rejected (401). Clearing cache and re-authenticating...", flush=True)
                 _clear_cached_token()
-                if not login(page, elba_id, pin):
+                if not login(page, elba_id, pin, timeout_seconds=LOGIN_TIMEOUT):
                     print("[transactions] Login failed.")
                     sys.exit(1)
                 token = _get_bearer_token(context, page)
@@ -1492,12 +1590,12 @@ def cmd_transactions(headless=True, account=None, date_from=None, date_to=None, 
                     sys.exit(1)
                 cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
                 transactions, status_code = fetch_transactions_all(token, cookies, account, date_from, date_to)
-            
+
             if transactions is None:
                 print("[transactions] Failed to fetch transactions")
                 sys.exit(1)
-            
-            # Debug: dump raw if requested
+
+            raw_path = None
             if DEBUG_ENABLED:
                 raw_path = _write_debug_json("transactions-raw", transactions)
                 print(f"[debug] Raw transactions saved to: {raw_path}")
@@ -1505,14 +1603,9 @@ def cmd_transactions(headless=True, account=None, date_from=None, date_to=None, 
             if len(transactions) == 0:
                 print("[transactions] No transactions found in date range")
                 sys.exit(0)
-            
-            # Determine output path
-            # If output is a directory (ends with / or exists as dir), use auto filename.
-            # Else use it as a file base.
-            
-            # Sanitize account for filename
+
+            # Resolve output base
             acc_clean = account.replace(" ", "")
-            
             if output:
                 out_path = Path(output)
                 if out_path.is_dir() or (str(output).endswith(os.sep)):
@@ -1520,46 +1613,68 @@ def cmd_transactions(headless=True, account=None, date_from=None, date_to=None, 
                     base_name = f"transactions_{acc_clean}_{date_from}_{date_to}"
                     file_base = out_path / base_name
                 else:
-                    # Treat as file base
-                    # Make sure parent exists
                     out_path.parent.mkdir(parents=True, exist_ok=True)
                     file_base = out_path
             else:
-                # Default to current directory? Or print to stdout?
-                # Spec says: if omitted, use transactions_<account>_<from>_<until>.<ext>
                 base_name = f"transactions_{acc_clean}_{date_from}_{date_to}"
                 file_base = Path(base_name)
 
-            if fmt == "csv":
-                out_file = file_base.with_suffix(".csv") if not str(file_base).endswith(".csv") else file_base
-                export_to_csv(transactions, out_file)
-                print(f"[transactions] Saved CSV: {out_file}")
-            
-            elif fmt == "json":
-                out_file = file_base.with_suffix(".json") if not str(file_base).endswith(".json") else file_base
-                
-                # Canonical JSON wrapping
-                pruned = [_prune_none(tx) for tx in transactions]
-                pruned = [tx for tx in pruned if tx is not None]
-                
-                wrapper = {
-                    "institution": "elba",
-                    "account": {
-                        "id": account, # We don't have ID separate from IBAN here easily without looking it up, reuse input
-                        "iban": account if "AT" in account else None
-                    },
-                    "range": { "from": date_from, "until": date_to },
-                    "fetchedAt": _now_iso_local(),
-                    "transactions": pruned
-                }
-                
-                # If debug enabled, include raw (though pruned is technically already close to raw for ELBA API)
-                if DEBUG_ENABLED:
-                    wrapper["raw"] = transactions
+            canonical = [_canonicalize_elba_transaction(tx) for tx in transactions if isinstance(tx, dict)]
 
+            wrapper = {
+                "institution": "elba",
+                "account": {"id": account, "iban": account if "AT" in account else None},
+                "range": {"from": date_from, "until": date_to},
+                "fetchedAt": _now_iso_local(),
+                "transactions": canonical,
+            }
+            if DEBUG_ENABLED:
+                wrapper["raw"] = transactions
+                if raw_path:
+                    wrapper["rawPath"] = str(raw_path)
+
+            if fmt == "json":
+                out_file = file_base.with_suffix(".json")
                 out_file.write_text(json.dumps(wrapper, ensure_ascii=False, indent=2))
                 print(f"[transactions] Saved JSON: {out_file}")
-            
+            else:
+                import csv
+
+                out_file = file_base.with_suffix(".csv")
+                out_file.parent.mkdir(parents=True, exist_ok=True)
+                fieldnames = [
+                    "bookingDate",
+                    "valueDate",
+                    "amount",
+                    "currency",
+                    "counterparty",
+                    "description",
+                    "purpose",
+                    "bankReference",
+                    "paymentReference",
+                ]
+                with out_file.open("w", newline="", encoding="utf-8") as f:
+                    w = csv.DictWriter(f, fieldnames=fieldnames)
+                    w.writeheader()
+                    for tx in canonical:
+                        amt = tx.get("amount") if isinstance(tx.get("amount"), dict) else {}
+                        cp = tx.get("counterparty") if isinstance(tx.get("counterparty"), dict) else {}
+                        refs = tx.get("references") if isinstance(tx.get("references"), dict) else {}
+                        w.writerow(
+                            {
+                                "bookingDate": tx.get("bookingDate"),
+                                "valueDate": tx.get("valueDate"),
+                                "amount": amt.get("amount"),
+                                "currency": amt.get("currency"),
+                                "counterparty": cp.get("name"),
+                                "description": tx.get("description"),
+                                "purpose": tx.get("purpose"),
+                                "bankReference": refs.get("bankReference"),
+                                "paymentReference": refs.get("paymentReference"),
+                            }
+                        )
+                print(f"[transactions] Saved CSV: {out_file}")
+
         finally:
             context.close()
 
@@ -1569,6 +1684,7 @@ def main():
     parser = argparse.ArgumentParser(description="Raiffeisen ELBA Automation")
     # Global flags (keep ordering consistent with george.py)
     parser.add_argument("--visible", action="store_true", help="Show browser")
+    parser.add_argument("--login-timeout", type=int, default=DEFAULT_LOGIN_TIMEOUT, help="Seconds to wait for pushTAN approval (default: 180)")
     parser.add_argument("--debug", action="store_true", help="Save bank-native payloads to ~/.moltbot/raiffeisen-elba/debug (default: off)")
 
     subparsers = parser.add_subparsers(dest="command")
@@ -1606,6 +1722,13 @@ def main():
 
     global DEBUG_ENABLED
     DEBUG_ENABLED = bool(getattr(args, "debug", False))
+
+    # Propagate login timeout to login() calls.
+    global LOGIN_TIMEOUT
+    try:
+        LOGIN_TIMEOUT = int(getattr(args, "login_timeout", DEFAULT_LOGIN_TIMEOUT))
+    except Exception:
+        LOGIN_TIMEOUT = DEFAULT_LOGIN_TIMEOUT
 
     if args.command == "setup":
         cmd_setup()
