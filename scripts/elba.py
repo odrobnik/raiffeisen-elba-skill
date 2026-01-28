@@ -771,31 +771,44 @@ def _get_bearer_token(context, page):
             print(f"[token] Captured: {captured_token['value'][:20]}...", flush=True)
         route.continue_()
     
+    # Hard time-limit the capture phase so we never hang here.
+    page.set_default_timeout(15000)
+    page.set_default_navigation_timeout(15000)
+
     page.route('**/api/**', handle_request)
     try:
+        start = time.time()
+
         # Force a fresh navigation so the SPA triggers API calls (cache can short-circuit).
         try:
-            page.goto("about:blank")
+            page.goto("about:blank", timeout=5000)
         except Exception:
             pass
 
-        # networkidle is brittle for SPA apps; use domcontentloaded with a timeout.
-        page.goto(URL_DASHBOARD, wait_until="domcontentloaded", timeout=15000)
-    except Exception:
-        # If navigation fails, try a reload to trigger requests
         try:
-            page.reload(wait_until="domcontentloaded", timeout=15000)
+            # networkidle is brittle for SPA apps; use domcontentloaded with a timeout.
+            page.goto(URL_DASHBOARD, wait_until="domcontentloaded", timeout=15000)
+        except Exception:
+            # If navigation fails, try a reload to trigger requests
+            try:
+                page.reload(wait_until="domcontentloaded", timeout=15000)
+            except Exception:
+                pass
+
+        # Give it a moment for API calls to fire.
+        time.sleep(3)
+        if not captured_token['value'] and (time.time() - start) < 20:
+            try:
+                page.reload(wait_until="domcontentloaded", timeout=15000)
+                time.sleep(2)
+            except Exception:
+                pass
+    finally:
+        try:
+            page.unroute('**/api/**')
         except Exception:
             pass
 
-    time.sleep(3)
-    if not captured_token['value']:
-        try:
-            page.reload(wait_until="domcontentloaded", timeout=15000)
-            time.sleep(2)
-        except Exception:
-            pass
-    page.unroute('**/api/**')
     token = captured_token['value']
     if token:
         _save_cached_token(token)
