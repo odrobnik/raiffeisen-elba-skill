@@ -82,10 +82,11 @@ Default save location: `~/clawd/raiffeisen-elba/documents`
 ### Transactions
 
 ```bash
-python3 {baseDir}/scripts/elba.py transactions --iban AT063293900008601411 --from 2025-01-01 --until 2025-12-31 --format json
-python3 {baseDir}/scripts/elba.py transactions --iban AT063293900008601411 --from 2025-01-01 --until 2025-12-31 --format csv
-python3 {baseDir}/scripts/elba.py transactions --iban AT063293900008601411 --from 2025-01-01 --until 2025-12-31 --format both
-python3 {baseDir}/scripts/elba.py transactions --iban AT063293900008601411 --from 2025-01-01 --until 2025-12-31 --output /path/to/transactions_2025
+python3 {baseDir}/scripts/elba.py transactions \
+  --account AT063293900008601411 \
+  --from 2025-01-01 --until 2025-12-31 \
+  --format json \
+  --out ~/transactions/2025_full
 ```
 
 The `transactions` command reuses cached API tokens and paginates until all results are retrieved.

@@ -1425,12 +1425,20 @@ def cmd_download(headless=True, output_dir=None, date_from=None, date_to=None, j
         finally:
             context.close()
 
-def cmd_transactions(headless=True, iban=None, date_from=None, date_to=None, output=None, fmt="json"):
-    """Download transactions for a single IBAN (logs in automatically if needed)."""
-    if not iban or not date_from or not date_to:
-        print("Missing required arguments: --iban, --from, --until")
+def cmd_transactions(headless=True, account=None, date_from=None, date_to=None, output=None, fmt="json"):
+    """Download transactions for an account (logs in automatically if needed)."""
+    if not account or not date_from or not date_to:
+        print("Missing required arguments: --account, --from, --until")
         sys.exit(1)
     
+    # ISO date validation
+    try:
+        datetime.strptime(date_from, "%Y-%m-%d")
+        datetime.strptime(date_to, "%Y-%m-%d")
+    except ValueError:
+        print("ERROR: Dates must be in YYYY-MM-DD format.")
+        sys.exit(1)
+
     elba_id, pin = load_credentials()
     if not elba_id or not pin:
         print("Credentials not found. Run 'setup' first.")
@@ -1467,7 +1475,9 @@ def cmd_transactions(headless=True, iban=None, date_from=None, date_to=None, out
                 sys.exit(1)
             
             cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
-            transactions, status_code = fetch_transactions_all(token, cookies, iban, date_from, date_to)
+            
+            # Note: elba.py uses 'iban' internally for fetch_transactions_all, so we pass 'account' as 'iban'
+            transactions, status_code = fetch_transactions_all(token, cookies, account, date_from, date_to)
             
             if transactions is None and status_code == 401:
                 print("[transactions] Token rejected (401). Clearing cache and re-authenticating...", flush=True)
@@ -1480,198 +1490,74 @@ def cmd_transactions(headless=True, iban=None, date_from=None, date_to=None, out
                     print("[transactions] ERROR: Could not extract bearer token")
                     sys.exit(1)
                 cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
-                transactions, status_code = fetch_transactions_all(token, cookies, iban, date_from, date_to)
+                transactions, status_code = fetch_transactions_all(token, cookies, account, date_from, date_to)
             
             if transactions is None:
                 print("[transactions] Failed to fetch transactions")
                 sys.exit(1)
             
+            # Debug: dump raw if requested
+            if DEBUG_ENABLED:
+                raw_path = _write_debug_json("transactions-raw", transactions)
+                print(f"[debug] Raw transactions saved to: {raw_path}")
+
             if len(transactions) == 0:
                 print("[transactions] No transactions found in date range")
                 sys.exit(0)
             
-            if not output:
-                output = f"transactions_{iban.replace('AT', '')}_{date_from}_{date_to}"
+            # Determine output path
+            # If output is a directory (ends with / or exists as dir), use auto filename.
+            # Else use it as a file base.
             
-            if fmt in ["csv", "both"]:
-                export_to_csv(transactions, Path(f"{output}.csv"))
-            if fmt in ["json", "both"]:
+            # Sanitize account for filename
+            acc_clean = account.replace(" ", "")
+            
+            if output:
+                out_path = Path(output)
+                if out_path.is_dir() or (str(output).endswith(os.sep)):
+                    out_path.mkdir(parents=True, exist_ok=True)
+                    base_name = f"transactions_{acc_clean}_{date_from}_{date_to}"
+                    file_base = out_path / base_name
+                else:
+                    # Treat as file base
+                    # Make sure parent exists
+                    out_path.parent.mkdir(parents=True, exist_ok=True)
+                    file_base = out_path
+            else:
+                # Default to current directory? Or print to stdout?
+                # Spec says: if omitted, use transactions_<account>_<from>_<until>.<ext>
+                base_name = f"transactions_{acc_clean}_{date_from}_{date_to}"
+                file_base = Path(base_name)
+
+            if fmt == "csv":
+                out_file = file_base.with_suffix(".csv") if not str(file_base).endswith(".csv") else file_base
+                export_to_csv(transactions, out_file)
+                print(f"[transactions] Saved CSV: {out_file}")
+            
+            elif fmt == "json":
+                out_file = file_base.with_suffix(".json") if not str(file_base).endswith(".json") else file_base
+                
+                # Canonical JSON wrapping
                 pruned = [_prune_none(tx) for tx in transactions]
                 pruned = [tx for tx in pruned if tx is not None]
-                export_to_json(pruned, Path(f"{output}.json"))
+                
+                wrapper = {
+                    "institution": "elba",
+                    "account": {
+                        "id": account, # We don't have ID separate from IBAN here easily without looking it up, reuse input
+                        "iban": account if "AT" in account else None
+                    },
+                    "range": { "from": date_from, "until": date_to },
+                    "fetchedAt": _now_iso_local(),
+                    "transactions": pruned
+                }
+                
+                # If debug enabled, include raw (though pruned is technically already close to raw for ELBA API)
+                if DEBUG_ENABLED:
+                    wrapper["raw"] = transactions
+
+                out_file.write_text(json.dumps(wrapper, ensure_ascii=False, indent=2))
+                print(f"[transactions] Saved JSON: {out_file}")
             
-            print("[transactions] Export complete")
         finally:
             context.close()
-
-def _fetch_portfolio(token, cookies, depot_id, as_of_date=None):
-    base_url = "https://mein.elba.raiffeisen.at/api/bankingwp-depotzentrale/depotzentrale-ui/rest/positionsuebersicht"
-    if as_of_date:
-        url = f"{base_url}/{depot_id}/{as_of_date}"
-    else:
-        url = f"{base_url}/{depot_id}"
-    
-    headers = {
-        "Accept": "application/json, text/plain, */*",
-        "Authorization": f"Bearer {token}",
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3 Safari/605.1.15"
-    }
-    
-    try:
-        response = requests.get(url, headers=headers, cookies=cookies)
-        if response.status_code == 200:
-            return response.json(), response.status_code
-        return {"error": response.text}, response.status_code
-    except Exception as e:
-        return {"error": str(e)}, None
-
-def cmd_portfolio(headless=True, depot_id=None, as_of_date=None, json_output=False):
-    """Fetch depot portfolio positions."""
-    if not depot_id:
-        print("Missing required argument: --depot-id")
-        sys.exit(1)
-    
-    elba_id, pin = load_credentials()
-    if not elba_id or not pin:
-        print("Credentials not found. Run 'setup' first.")
-        sys.exit(1)
-    
-    if not PROFILE_DIR.exists():
-        PROFILE_DIR.mkdir(parents=True)
-    
-    with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            user_data_dir=str(PROFILE_DIR),
-            headless=headless,
-            viewport={"width": 1280, "height": 800}
-        )
-        
-        page = context.new_page()
-        try:
-            print("[portfolio] Attempting to access documents (reuse session)...")
-            page.goto(URL_DOCUMENTS, wait_until="domcontentloaded")
-            time.sleep(2)
-            
-            token = _get_bearer_token(context, page)
-            if not token:
-                print("[portfolio] Token not found, performing login...")
-                if not login(page, elba_id, pin):
-                    print("[portfolio] Login failed.")
-                    sys.exit(1)
-                token = _get_bearer_token(context, page)
-            
-            if not token:
-                print("[portfolio] ERROR: Could not extract bearer token")
-                sys.exit(1)
-            
-            cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
-            data, status_code = _fetch_portfolio(token, cookies, depot_id, as_of_date)
-            
-            if status_code == 401:
-                print("[portfolio] Token rejected (401). Clearing cache and re-authenticating...", flush=True)
-                _clear_cached_token()
-                if not login(page, elba_id, pin):
-                    print("[portfolio] Login failed.")
-                    sys.exit(1)
-                token = _get_bearer_token(context, page)
-                if not token:
-                    print("[portfolio] ERROR: Could not extract bearer token")
-                    sys.exit(1)
-                cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
-                data, status_code = _fetch_portfolio(token, cookies, depot_id, as_of_date)
-            
-            if status_code != 200:
-                print("[portfolio] Failed to fetch portfolio")
-                print(json.dumps(data, ensure_ascii=False, indent=2))
-                sys.exit(1)
-            
-            pruned = _prune_none(data)
-            if json_output:
-                print(json.dumps(pruned, ensure_ascii=False, indent=2))
-            else:
-                print(json.dumps(pruned, ensure_ascii=False, indent=2))
-        finally:
-            context.close()
-def main():
-    parser = argparse.ArgumentParser(description="Raiffeisen ELBA Automation")
-    parser.add_argument("--debug", action="store_true", help="Save bank-native payloads to ~/.moltbot/raiffeisen-elba/debug (default: off)")
-    subparsers = parser.add_subparsers(dest="command")
-    
-    subparsers.add_parser("setup", help="Configure credentials")
-    
-    login_parser = subparsers.add_parser("login", help="Login and save session")
-    login_parser.add_argument("--visible", action="store_true", help="Show browser")
-    
-    subparsers.add_parser("logout", help="Clear session")
-    
-    accounts_parser = subparsers.add_parser("accounts", help="List accounts")
-    accounts_parser.add_argument("--visible", action="store_true", help="Show browser")
-    accounts_parser.add_argument("--json", action="store_true", help="Output as JSON")
-    
-    download_parser = subparsers.add_parser("download", help="Download documents from mailbox")
-    download_parser.add_argument("--visible", action="store_true", help="Show browser")
-    download_parser.add_argument("--json", action="store_true", help="Output as JSON")
-    download_parser.add_argument("-o", "--output", help="Output directory for documents")
-    download_parser.add_argument("--from", dest="date_from", help="Start date (DD.MM.YYYY)")
-    download_parser.add_argument("--until", dest="date_to", help="End date (DD.MM.YYYY)")
-    
-    transactions_parser = subparsers.add_parser("transactions", help="Download transactions for an IBAN")
-    transactions_parser.add_argument("--visible", action="store_true", help="Show browser")
-    transactions_parser.add_argument("--iban", required=True, help="IBAN to fetch transactions for")
-    transactions_parser.add_argument("--from", dest="date_from", required=True, help="Start date (YYYY-MM-DD)")
-    transactions_parser.add_argument("--until", dest="date_to", required=True, help="End date (YYYY-MM-DD)")
-    transactions_parser.add_argument("--format", dest="fmt", choices=["csv", "json", "both"], default="json", help="Output format")
-    transactions_parser.add_argument("--output", help="Output file base name (without extension)")
-    
-    portfolio_parser = subparsers.add_parser("portfolio", help="Fetch depot portfolio positions")
-    portfolio_parser.add_argument("--visible", action="store_true", help="Show browser")
-    portfolio_parser.add_argument("--depot-id", dest="depot_id", required=True, help="Depot ID (e.g., 3293966252586)")
-    portfolio_parser.add_argument("--date", dest="as_of_date", help="As-of date (YYYY-MM-DD)")
-    portfolio_parser.add_argument("--json", action="store_true", help="Output as JSON")
-    
-    subparsers.add_parser("balances", help="List balances")
-    
-    args = parser.parse_args()
-
-    global DEBUG_ENABLED
-    DEBUG_ENABLED = bool(getattr(args, "debug", False))
-    
-    if args.command == "setup":
-        cmd_setup()
-    elif args.command == "login":
-        cmd_login(headless=not args.visible)
-    elif args.command == "logout":
-        cmd_logout()
-    elif args.command == "accounts":
-        cmd_accounts(headless=not getattr(args, 'visible', False), json_output=getattr(args, 'json', False))
-    elif args.command == "download":
-        cmd_download(
-            headless=not getattr(args, 'visible', False),
-            output_dir=getattr(args, 'output', None),
-            date_from=getattr(args, 'date_from', None),
-            date_to=getattr(args, 'date_to', None),
-            json_output=getattr(args, 'json', False)
-        )
-    elif args.command == "transactions":
-        cmd_transactions(
-            headless=not getattr(args, 'visible', False),
-            iban=getattr(args, 'iban', None),
-            date_from=getattr(args, 'date_from', None),
-            date_to=getattr(args, 'date_to', None),
-            output=getattr(args, 'output', None),
-            fmt=getattr(args, 'fmt', "json")
-        )
-    elif args.command == "portfolio":
-        cmd_portfolio(
-            headless=not getattr(args, 'visible', False),
-            depot_id=getattr(args, 'depot_id', None),
-            as_of_date=getattr(args, 'as_of_date', None),
-            json_output=getattr(args, 'json', False)
-        )
-    elif args.command == "balances":
-        print("Not implemented yet. Please run 'login' first to ensure access.")
-    else:
-        parser.print_help()
-
-if __name__ == "__main__":
-    main()
