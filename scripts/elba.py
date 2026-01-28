@@ -316,8 +316,12 @@ def login(page, elba_id, pin):
             
             # Navigate to the full dashboard to ensure all cookies are set
             print("[login] Loading products dashboard to establish session...")
-            # networkidle is brittle for SPA apps; use domcontentloaded with a timeout.
-            page.goto(URL_DASHBOARD, wait_until="domcontentloaded", timeout=15000)
+            # domcontentloaded is usually enough; occasionally Playwright reports net::ERR_ABORTED
+            # even though the SPA is usable. Treat that as a warning and continue.
+            try:
+                page.goto(URL_DASHBOARD, wait_until="domcontentloaded", timeout=15000)
+            except Exception as e:
+                print(f"[login] WARNING: Dashboard navigation error: {e}")
             time.sleep(3)
             
             # Verify we didn't get redirected back to login
