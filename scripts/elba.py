@@ -316,7 +316,8 @@ def login(page, elba_id, pin):
             
             # Navigate to the full dashboard to ensure all cookies are set
             print("[login] Loading products dashboard to establish session...")
-            page.goto(URL_DASHBOARD, wait_until="networkidle")
+            # networkidle is brittle for SPA apps; use domcontentloaded with a timeout.
+            page.goto(URL_DASHBOARD, wait_until="domcontentloaded", timeout=15000)
             time.sleep(3)
             
             # Verify we didn't get redirected back to login
@@ -369,7 +370,8 @@ def fetch_accounts(page):
     if "meine-produkte/dashboard" not in page.url:
         print(f"[accounts] Navigating to products dashboard...")
         try:
-            page.goto(URL_DASHBOARD, wait_until="networkidle")
+            # networkidle is brittle for SPA apps; use domcontentloaded with a timeout.
+            page.goto(URL_DASHBOARD, wait_until="domcontentloaded", timeout=15000)
             time.sleep(2)
         except Exception as e:
             error_msg = str(e)
