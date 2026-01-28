@@ -1253,65 +1253,77 @@ def cmd_accounts(headless=True, json_output=False):
             if token:
                 cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
                 accounts, raw_path = fetch_accounts_api(token, cookies)
-            
+
+                # Common failure: cached token expired -> 401. Clear cache and retry once.
+                if accounts is None:
+                    _clear_cached_token()
+                    token = _get_bearer_token(context, page)
+                    if token:
+                        cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
+                        accounts, raw_path = fetch_accounts_api(token, cookies)
+
             # If API failed, then login and retry once
             if accounts is None:
                 print("[accounts] API request failed or no token; performing login...")
                 if not login(page, elba_id, pin):
                     print("[accounts] Login failed.")
                     sys.exit(1)
-                
+
+                # After login, force token re-extraction (cached token might be stale).
+                _clear_cached_token()
                 token = _get_bearer_token(context, page)
                 if token:
                     cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
                     accounts, raw_path = fetch_accounts_api(token, cookies)
-            
+
             if accounts is None:
                 print("[accounts] WARNING: API unavailable, falling back to scraping.")
                 accounts = fetch_accounts(page)
-            
-            if not accounts:
-                if json_output:
-                    print("[]")
-                else:
-                    print("No accounts found.")
-                sys.exit(1)
-            
+
+            wrapper = canonicalize_accounts_elba(accounts or [], raw_path=raw_path)
+
             if json_output:
-                import json
-                pruned = [_prune_none(acc) for acc in accounts]
-                pruned = [acc for acc in pruned if acc is not None]
-                print(json.dumps(pruned, ensure_ascii=False, indent=2))
+                print(json.dumps(wrapper, ensure_ascii=False, indent=2))
             else:
-                print("\n" + "="*60)
-                print("ACCOUNTS")
-                print("="*60)
-                
-                for acc in accounts:
-                    print(f"\n{acc['type']} - {acc['name']}")
-                    if acc['type'] == "Depot":
-                        print(f"  Depot #:     {acc['iban']}")
-                        value_text = _format_money_pair_for_print(acc.get('value'), acc.get('value_eur'))
-                        if value_text != "N/A":
-                            print(f"  Value:       {value_text}")
-                        profit_loss = acc.get('profit_loss')
-                        if profit_loss and isinstance(profit_loss, dict):
-                            pl_amount = _format_money_for_print({"amount": profit_loss.get("amount"), "currencyCode": profit_loss.get("currencyCode")})
-                            if pl_amount != "N/A":
-                                print(f"  Profit/Loss: {pl_amount}")
-                            pl_percent = _format_profit_loss_for_print(profit_loss)
-                            if pl_percent != "N/A":
-                                print(f"  Performance: {pl_percent}")
+                print(f"[accounts] {len(wrapper['accounts'])} account(s):")
+                for acc in wrapper["accounts"]:
+                    name = acc.get("name") or "N/A"
+                    iban = acc.get("iban")
+                    iban_clean = "".join(str(iban).split()) if iban is not None else ""
+                    iban_short = f"{iban_clean[:4]}...{iban_clean[-4:]}" if len(iban_clean) > 8 else (iban_clean or "IBAN N/A")
+                    typ = acc.get("type") or "other"
+                    cur = acc.get("currency") or "EUR"
+
+                    balances = acc.get("balances") if isinstance(acc.get("balances"), dict) else None
+                    booked = balances.get("booked") if isinstance(balances, dict) else None
+                    available = balances.get("available") if isinstance(balances, dict) else None
+
+                    sec = acc.get("securities") if isinstance(acc.get("securities"), dict) else None
+                    sec_value = sec.get("value") if isinstance(sec, dict) else None
+
+                    if isinstance(sec_value, dict) and sec_value.get("amount") is not None:
+                        v_s = f"{_eu_amount(float(sec_value['amount']))} {cur}"
+                        pl = sec.get("profitLoss") if isinstance(sec, dict) else None
+                        pl_s = ""
+                        if isinstance(pl, dict) and pl.get("amount") is not None:
+                            pl_s = f" (P/L {_eu_amount(float(pl['amount']))} {cur}" + (f" / {float(pl.get('percent'))*100:.1f}%" if pl.get("percent") is not None else "") + ")"
+                        print(f"- {name} — {iban_short} — value {v_s}{pl_s} — {typ}")
+                        continue
+
+                    booked_s = "N/A"
+                    avail_s = None
+                    if isinstance(booked, dict) and booked.get("amount") is not None:
+                        booked_s = f"{_eu_amount(float(booked['amount']))} {cur}"
+                    if isinstance(available, dict) and available.get("amount") is not None:
+                        avail_s = f"{_eu_amount(float(available['amount']))} {cur}"
+
+                    if avail_s and avail_s != booked_s:
+                        print(f"- {name} — {iban_short} — {booked_s} (avail {avail_s}) — {typ}")
                     else:
-                        print(f"  IBAN:      {acc['iban']}")
-                        balance_text = _format_money_pair_for_print(acc.get('balance'), acc.get('balance_eur'))
-                        if balance_text != "N/A":
-                            print(f"  Balance:   {balance_text}")
-                        available_text = _format_money_pair_for_print(acc.get('available'), acc.get('available_eur'))
-                        if available_text != "N/A":
-                            print(f"  Available: {available_text}")
-                
-                print("\n" + "="*60)
+                        print(f"- {name} — {iban_short} — {booked_s} — {typ}")
+
+                if wrapper.get("rawPath"):
+                    print(f"[accounts] raw payload saved: {wrapper['rawPath']}")
             
         finally:
             context.close()
