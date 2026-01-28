@@ -109,7 +109,7 @@ def _canonical_account_type_elba(raw_type: str | None) -> str:
     if 'spar' in t:
         return 'savings'
     if 'kredit' in t or 'loan' in t:
-        return 'loan'
+        return 'debt'
     return 'other'
 
 
