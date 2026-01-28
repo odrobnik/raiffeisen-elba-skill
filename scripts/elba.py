@@ -72,7 +72,12 @@ def _ensure_dir(p: Path) -> None:
     p.mkdir(parents=True, exist_ok=True)
 
 
-def _write_debug_json(prefix: str, payload) -> Path:
+DEBUG_ENABLED: bool = False
+
+
+def _write_debug_json(prefix: str, payload) -> Path | None:
+    if not DEBUG_ENABLED:
+        return None
     _ensure_dir(DEBUG_DIR)
     from datetime import datetime
     ts = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
@@ -1589,6 +1594,7 @@ def cmd_portfolio(headless=True, depot_id=None, as_of_date=None, json_output=Fal
             context.close()
 def main():
     parser = argparse.ArgumentParser(description="Raiffeisen ELBA Automation")
+    parser.add_argument("--debug", action="store_true", help="Save bank-native payloads to ~/.clawdbot/raiffeisen-elba/debug (default: off)")
     subparsers = parser.add_subparsers(dest="command")
     
     subparsers.add_parser("setup", help="Configure credentials")
@@ -1626,6 +1632,9 @@ def main():
     subparsers.add_parser("balances", help="List balances")
     
     args = parser.parse_args()
+
+    global DEBUG_ENABLED
+    DEBUG_ENABLED = bool(getattr(args, "debug", False))
     
     if args.command == "setup":
         cmd_setup()

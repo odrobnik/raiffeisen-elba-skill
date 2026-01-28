@@ -45,6 +45,7 @@ Session is persisted in `~/.clawdbot/raiffeisen-elba/.pw-profile/`.
 python3 {baseDir}/scripts/elba.py accounts          # List all accounts (auto-login if needed)
 python3 {baseDir}/scripts/elba.py accounts --visible # Show browser while fetching
 python3 {baseDir}/scripts/elba.py accounts --json    # Output as JSON
+python3 {baseDir}/scripts/elba.py --debug accounts  # Save bank-native payloads to debug/ (optional)
 ```
 
 The `accounts` command will reuse a cached API token when available and only log in (pushTAN 2FA) if needed.
