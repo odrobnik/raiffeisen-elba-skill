@@ -82,7 +82,7 @@ Default save location: `~/clawd/raiffeisen-elba/documents`
 ### Transactions
 
 ```bash
-python3 {baseDir}/scripts/elba.py transactions \
+python3 {baseDir}/scripts/elba.py --debug transactions \
   --account AT063293900008601411 \
   --from 2025-01-01 --until 2025-12-31 \
   --format json \

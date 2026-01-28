@@ -1567,48 +1567,46 @@ def cmd_transactions(headless=True, account=None, date_from=None, date_to=None, 
 
 def main():
     parser = argparse.ArgumentParser(description="Raiffeisen ELBA Automation")
+    # Global flags (keep ordering consistent with george.py)
+    parser.add_argument("--visible", action="store_true", help="Show browser")
     parser.add_argument("--debug", action="store_true", help="Save bank-native payloads to ~/.moltbot/raiffeisen-elba/debug (default: off)")
+
     subparsers = parser.add_subparsers(dest="command")
-    
+
     subparsers.add_parser("setup", help="Configure credentials")
-    
-    login_parser = subparsers.add_parser("login", help="Login and save session")
-    login_parser.add_argument("--visible", action="store_true", help="Show browser")
-    
+
+    subparsers.add_parser("login", help="Login and save session")
+
     subparsers.add_parser("logout", help="Clear session")
-    
+
     accounts_parser = subparsers.add_parser("accounts", help="List accounts")
-    accounts_parser.add_argument("--visible", action="store_true", help="Show browser")
     accounts_parser.add_argument("--json", action="store_true", help="Output as JSON")
-    
+
     download_parser = subparsers.add_parser("download", help="Download documents from mailbox")
-    download_parser.add_argument("--visible", action="store_true", help="Show browser")
     download_parser.add_argument("--json", action="store_true", help="Output as JSON")
     download_parser.add_argument("-o", "--output", help="Output directory for documents")
     download_parser.add_argument("--from", dest="date_from", help="Start date (DD.MM.YYYY)")
     download_parser.add_argument("--until", dest="date_to", help="End date (DD.MM.YYYY)")
-    
+
     transactions_parser = subparsers.add_parser("transactions", help="Download transactions")
-    transactions_parser.add_argument("--visible", action="store_true", help="Show browser")
     transactions_parser.add_argument("--account", required=True, help="Account IBAN")
     transactions_parser.add_argument("--from", dest="date_from", required=True, help="Start date (YYYY-MM-DD)")
     transactions_parser.add_argument("--until", dest="date_to", required=True, help="End date (YYYY-MM-DD)")
     transactions_parser.add_argument("--format", dest="fmt", choices=["csv", "json"], default="json", help="Output format")
     transactions_parser.add_argument("--out", dest="output", help="Output file base or directory")
-    
+
     portfolio_parser = subparsers.add_parser("portfolio", help="Fetch depot portfolio positions")
-    portfolio_parser.add_argument("--visible", action="store_true", help="Show browser")
     portfolio_parser.add_argument("--depot-id", dest="depot_id", required=True, help="Depot ID")
     portfolio_parser.add_argument("--date", dest="as_of_date", help="As-of date (YYYY-MM-DD)")
     portfolio_parser.add_argument("--json", action="store_true", help="Output as JSON")
-    
+
     subparsers.add_parser("balances", help="List balances")
-    
+
     args = parser.parse_args()
 
     global DEBUG_ENABLED
     DEBUG_ENABLED = bool(getattr(args, "debug", False))
-    
+
     if args.command == "setup":
         cmd_setup()
     elif args.command == "login":
@@ -1616,10 +1614,10 @@ def main():
     elif args.command == "logout":
         cmd_logout()
     elif args.command == "accounts":
-        cmd_accounts(headless=not getattr(args, 'visible', False), json_output=getattr(args, 'json', False))
+        cmd_accounts(headless=not args.visible, json_output=getattr(args, 'json', False))
     elif args.command == "download":
         cmd_download(
-            headless=not getattr(args, 'visible', False),
+            headless=not args.visible,
             output_dir=getattr(args, 'output', None),
             date_from=getattr(args, 'date_from', None),
             date_to=getattr(args, 'date_to', None),
@@ -1627,7 +1625,7 @@ def main():
         )
     elif args.command == "transactions":
         cmd_transactions(
-            headless=not getattr(args, 'visible', False),
+            headless=not args.visible,
             account=getattr(args, 'account', None),
             date_from=getattr(args, 'date_from', None),
             date_to=getattr(args, 'date_to', None),
@@ -1636,7 +1634,7 @@ def main():
         )
     elif args.command == "portfolio":
         cmd_portfolio(
-            headless=not getattr(args, 'visible', False),
+            headless=not args.visible,
             depot_id=getattr(args, 'depot_id', None),
             as_of_date=getattr(args, 'as_of_date', None),
             json_output=getattr(args, 'json', False)
