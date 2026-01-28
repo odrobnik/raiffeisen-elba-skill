@@ -771,17 +771,19 @@ def _get_bearer_token(context, page):
     
     page.route('**/api/**', handle_request)
     try:
-        page.goto(URL_DASHBOARD, wait_until="networkidle")
+        # networkidle is brittle for SPA apps; use domcontentloaded with a timeout.
+        page.goto(URL_DASHBOARD, wait_until="domcontentloaded", timeout=15000)
     except Exception:
         # If navigation fails, try a reload to trigger requests
         try:
-            page.reload(wait_until="networkidle")
+            page.reload(wait_until="domcontentloaded", timeout=15000)
         except Exception:
             pass
+
     time.sleep(3)
     if not captured_token['value']:
         try:
-            page.reload(wait_until="networkidle")
+            page.reload(wait_until="domcontentloaded", timeout=15000)
             time.sleep(2)
         except Exception:
             pass
