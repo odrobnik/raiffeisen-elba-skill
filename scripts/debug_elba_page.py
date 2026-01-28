@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
-PROFILE_DIR = Path.home() / ".clawdbot" / "raiffeisen-elba" / ".pw-profile"
+PROFILE_DIR = Path.home() / ".moltbot" / "raiffeisen-elba" / ".pw-profile"
 
 def main():
     if not PROFILE_DIR.exists():

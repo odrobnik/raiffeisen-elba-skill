@@ -25,10 +25,10 @@ except ImportError:
 BASE_DIR = Path(__file__).parent.parent
 CREDENTIALS_DIR = Path.home() / "clawd" / "raiffeisen-elba"
 CREDENTIALS_FILE = CREDENTIALS_DIR / ".env"
-PROFILE_DIR = Path.home() / ".clawdbot" / "raiffeisen-elba" / ".pw-profile"
+PROFILE_DIR = Path.home() / ".moltbot" / "raiffeisen-elba" / ".pw-profile"
 SESSION_URL_FILE = PROFILE_DIR / "last_url.txt"
 TOKEN_CACHE_FILE = PROFILE_DIR / "token.json"
-DEBUG_DIR = Path.home() / ".clawdbot" / "raiffeisen-elba" / "debug"
+DEBUG_DIR = Path.home() / ".moltbot" / "raiffeisen-elba" / "debug"
 
 URL_LOGIN = "https://sso.raiffeisen.at/mein-login/identify"
 URL_DASHBOARD = "https://mein.elba.raiffeisen.at/bankingws-widgetsystem/meine-produkte/dashboard"
@@ -1594,7 +1594,7 @@ def cmd_portfolio(headless=True, depot_id=None, as_of_date=None, json_output=Fal
             context.close()
 def main():
     parser = argparse.ArgumentParser(description="Raiffeisen ELBA Automation")
-    parser.add_argument("--debug", action="store_true", help="Save bank-native payloads to ~/.clawdbot/raiffeisen-elba/debug (default: off)")
+    parser.add_argument("--debug", action="store_true", help="Save bank-native payloads to ~/.moltbot/raiffeisen-elba/debug (default: off)")
     subparsers = parser.add_subparsers(dest="command")
     
     subparsers.add_parser("setup", help="Configure credentials")

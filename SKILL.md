@@ -35,7 +35,7 @@ python3 {baseDir}/scripts/elba.py login             # Login and save session
 python3 {baseDir}/scripts/elba.py logout            # Clear session
 ```
 
-Session is persisted in `~/.clawdbot/raiffeisen-elba/.pw-profile/`.
+Session is persisted in `~/.moltbot/raiffeisen-elba/.pw-profile/`.
 
 **Note:** Sessions and API tokens are cached in the Playwright profile and reused when possible.
 
