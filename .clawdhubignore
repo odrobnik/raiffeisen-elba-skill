@@ -3,10 +3,8 @@
 __pycache__/
 *.pyc
 .env
-# GitHub-only docs
 README.md
+references/
 # Local secrets
-tokens-*.json
 secrets/
-!references/
-!references/*.json
+tokens-*.json

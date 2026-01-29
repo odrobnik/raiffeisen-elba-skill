@@ -25,7 +25,7 @@ except ImportError:
     sys.exit(1)
 
 # --- Configuration ---
-DEFAULT_LOGIN_TIMEOUT = 180  # seconds
+DEFAULT_LOGIN_TIMEOUT = 300  # seconds (standard: 5 minutes)
 LOGIN_TIMEOUT = DEFAULT_LOGIN_TIMEOUT
 
 BASE_DIR = Path(__file__).parent.parent
@@ -35,6 +35,11 @@ PROFILE_DIR = Path.home() / ".moltbot" / "raiffeisen-elba" / ".pw-profile"
 SESSION_URL_FILE = PROFILE_DIR / "last_url.txt"
 TOKEN_CACHE_FILE = PROFILE_DIR / "token.json"
 DEBUG_DIR = Path.home() / ".moltbot" / "raiffeisen-elba" / "debug"
+
+# Ephemeral outputs (documents, canonical exports) go to /tmp by default.
+# Override with MOLTBOT_TMP if you want a different temp root.
+_TMP_ROOT = Path(os.environ.get("MOLTBOT_TMP", "/tmp")).expanduser().resolve()
+DEFAULT_OUTPUT_DIR = _TMP_ROOT / "moltbot" / "elba"
 
 URL_LOGIN = "https://sso.raiffeisen.at/mein-login/identify"
 URL_DASHBOARD = "https://mein.elba.raiffeisen.at/bankingws-widgetsystem/meine-produkte/dashboard"
@@ -154,15 +159,40 @@ def canonicalize_accounts_elba(accounts: list[dict], raw_path: Path | None = Non
                 'available': {'amount': av.get('amount'), 'currency': currency} if av and av.get('amount') is not None else None,
             }
 
-        out_accounts.append({
-            'id': iban or name,
+        # Normalize depot identifiers: use digits-only id (e.g. "32939 / 66.252.586" -> "3293966252586")
+        acct_id = iban or name
+        acct_iban = iban
+        if typ == 'depot':
+            d = _digits(str(iban or ""))
+            if d:
+                acct_id = d
+                acct_iban = d
+
+        acct = {
+            'id': acct_id,
             'type': typ,
             'name': name,
-            'iban': iban,
             'currency': currency,
-            'balances': balances,
-            'securities': securities,
-        })
+        }
+        # Omit "iban": null
+        if acct_iban:
+            acct['iban'] = acct_iban
+
+        # Omit null/empty balances
+        if isinstance(balances, dict):
+            if any(v is not None for v in balances.values()):
+                acct['balances'] = balances
+        elif balances is not None:
+            acct['balances'] = balances
+
+        # Omit null/empty securities
+        if isinstance(securities, dict):
+            if any(v is not None for v in securities.values()):
+                acct['securities'] = securities
+        elif securities is not None:
+            acct['securities'] = securities
+
+        out_accounts.append(acct)
 
     return {
         'institution': 'elba',
@@ -970,6 +1000,10 @@ def _product_to_account(product):
         "profit_loss": profit_loss
     }
 
+def _digits(s: str | None) -> str:
+    return "".join(ch for ch in (s or "") if ch.isdigit())
+
+
 def fetch_accounts_api(token, cookies):
     """Fetch accounts via products API.
 
@@ -998,9 +1032,47 @@ def fetch_accounts_api(token, cookies):
     except Exception as e:
         print(f"[api] Error: {e}", flush=True)
         return (None, None)
+
+
+def fetch_depot_transactions_api(token, cookies, bankleitzahl: str, depotnummer: str, date_from: str, date_to: str):
+    """Fetch depot (portfolio) transactions via ELBA depotzentrale endpoint.
+
+    Returns: (payload, status_code, raw_path)
+    """
+    url = "https://mein.elba.raiffeisen.at/api/bankingwp-depotzentrale/depotzentrale-ui/rest/bewegungsuebersicht"
+
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3 Safari/605.1.15",
+    }
+
+    body = {
+        "bankleitzahl": str(bankleitzahl),
+        "depotnummer": str(depotnummer),
+        "datumVon": f"{date_from}T00:00:00.000Z",
+        "datumBis": f"{date_to}T23:59:59.999Z",
+        "auftragstyp": "ALLE",
+        "status": "ALLE",
+        "dauerauftrag": "OHNE",
+    }
+
+    try:
+        resp = requests.post(url, headers=headers, cookies=cookies, data=json.dumps(body))
+        payload = None
+        try:
+            payload = resp.json()
+        except Exception:
+            payload = {"_error": "non-json response", "text": resp.text}
+
+        raw_path = _write_debug_json(
+            f"depot-transactions-raw-{bankleitzahl}{depotnummer}-{date_from}-{date_to}",
+            payload,
+        )
+        return payload, resp.status_code, raw_path
     except Exception as e:
-        print(f"[api] Error: {e}", flush=True)
-        return None
+        return {"_error": str(e)}, 0, None
 
 
 def fetch_documents(page, output_dir=None, date_from=None, date_to=None):
@@ -1046,7 +1118,7 @@ def fetch_documents(page, output_dir=None, date_from=None, date_to=None):
     
     # Set up download directory
     if not output_dir:
-        output_dir = Path.home() / "clawd" / "raiffeisen-elba" / "documents"
+        output_dir = DEFAULT_OUTPUT_DIR / "documents"
     else:
         output_dir = Path(output_dir)
     
@@ -1600,11 +1672,7 @@ def cmd_transactions(headless=True, account=None, date_from=None, date_to=None, 
                 raw_path = _write_debug_json("transactions-raw", transactions)
                 print(f"[debug] Raw transactions saved to: {raw_path}")
 
-            if len(transactions) == 0:
-                print("[transactions] No transactions found in date range")
-                sys.exit(0)
-
-            # Resolve output base
+            # Resolve output base (even if there are 0 transactions)
             acc_clean = account.replace(" ", "")
             if output:
                 out_path = Path(output)
@@ -1617,7 +1685,11 @@ def cmd_transactions(headless=True, account=None, date_from=None, date_to=None, 
                     file_base = out_path
             else:
                 base_name = f"transactions_{acc_clean}_{date_from}_{date_to}"
-                file_base = Path(base_name)
+                DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+                file_base = DEFAULT_OUTPUT_DIR / base_name
+
+            if len(transactions) == 0:
+                print("[transactions] No transactions found in date range", flush=True)
 
             canonical = [_canonicalize_elba_transaction(tx) for tx in transactions if isinstance(tx, dict)]
 
@@ -1680,29 +1752,343 @@ def cmd_transactions(headless=True, account=None, date_from=None, date_to=None, 
 
 
 
+def _fetch_portfolio_positions(token: str, cookies: dict, depot_id: str, as_of_date: str | None = None):
+    """Fetch depot portfolio positions via ELBA depotzentrale API.
+
+    This is the JSON API for "stocks data" (positions overview).
+
+    Endpoint (observed):
+      GET https://mein.elba.raiffeisen.at/api/bankingwp-depotzentrale/depotzentrale-ui/rest/positionsuebersicht/<depotId>[/<YYYY-MM-DD>]
+
+    Returns: (payload, status_code)
+    """
+    base_url = "https://mein.elba.raiffeisen.at/api/bankingwp-depotzentrale/depotzentrale-ui/rest/positionsuebersicht"
+    url = f"{base_url}/{depot_id}/{as_of_date}" if as_of_date else f"{base_url}/{depot_id}"
+
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Authorization": f"Bearer {token}",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3 Safari/605.1.15",
+    }
+
+    try:
+        response = requests.get(url, headers=headers, cookies=cookies)
+        if response.status_code == 200:
+            return response.json(), response.status_code
+        return {"error": response.text, "status": response.status_code}, response.status_code
+    except Exception as e:
+        return {"error": str(e)}, None
+
+
+def _canonicalize_elba_portfolio(payload: dict, *, depot_id: str, as_of_date: str | None) -> dict:
+    """Best-effort canonicalization for ELBA portfolio positions.
+
+    We keep the full bank-native payload in wrapper.raw when --debug.
+    """
+    # NOTE: We don't yet know all payload shapes; this is defensive.
+    positions = []
+    
+    # Try different structures based on observed API responses
+    # 1. Structure from input.txt: "gruppen" -> "positionen"
+    if isinstance(payload, dict) and "gruppen" in payload:
+        gruppen = payload.get("gruppen", [])
+        if isinstance(gruppen, list):
+            for g in gruppen:
+                if isinstance(g, dict) and "positionen" in g:
+                    pos = g.get("positionen")
+                    if isinstance(pos, list):
+                        positions.extend([x for x in pos if isinstance(x, dict)])
+    
+    # 2. Fallback: direct list keys
+    if not positions and isinstance(payload, dict):
+        for key in ("positionen", "positions", "data", "items"):
+            v = payload.get(key)
+            if isinstance(v, list):
+                positions = [x for x in v if isinstance(x, dict)]
+                break
+
+    def money(amount_obj):
+        if not amount_obj:
+            return None
+        if isinstance(amount_obj, dict):
+            try:
+                amt = amount_obj.get("wert") or amount_obj.get("amount")
+                curr = amount_obj.get("einheit") or amount_obj.get("currency") or "EUR"
+                if amt is not None:
+                    return {"amount": float(amt), "currency": str(curr)}
+            except Exception:
+                pass
+        return None
+
+    out_positions = []
+    for p in positions:
+        # Mapping based on input.txt schema
+        isin = p.get("isin") or p.get("ISIN")
+        name = p.get("wpBezeichnung") or p.get("bezeichnung") or p.get("name") or p.get("instrumentName")
+        
+        # Quantity
+        qty_obj = p.get("stueck") or p.get("bestand") or p.get("quantity")
+        qty = None
+        if isinstance(qty_obj, dict):
+            qty = qty_obj.get("wert")
+        elif isinstance(qty_obj, (int, float)):
+            qty = qty_obj
+            
+        # Price (Current quote)
+        price_obj = p.get("aktKurs") or p.get("kurs") or p.get("price")
+        price = money(price_obj)
+        
+        # Purchase Price (Avg Cost)
+        cost_obj = p.get("kaufKurs")
+        cost_price = money(cost_obj)
+        
+        # Market Value
+        value_obj = p.get("aktKurswert") or p.get("wert") or p.get("marketValue") or p.get("value")
+        market_value = money(value_obj)
+        
+        # Performance
+        perf_abs_obj = p.get("veraenderungAbsolut")
+        perf_abs = money(perf_abs_obj)
+        
+        perf_pct = p.get("veraenderungAbsolutProzent")
+
+        out_positions.append(
+            {
+                "isin": str(isin) if isin else None,
+                "name": str(name).strip() if name else None,
+                "quantity": qty,
+                "price": price,
+                "costPrice": cost_price,
+                "marketValue": market_value,
+                "performance": {
+                    "absolute": perf_abs,
+                    "percent": float(perf_pct) if perf_pct is not None else None
+                }
+            }
+        )
+
+    return {
+        "institution": "elba",
+        "account": {"id": depot_id, "iban": None},
+        "asOf": as_of_date,
+        "fetchedAt": _now_iso_local(),
+        "positions": out_positions,
+    }
+
+
+def _canonicalize_elba_depot_transaction(item: dict) -> dict | None:
+    if not isinstance(item, dict):
+        return None
+
+    bewegungsart = item.get("bewegungsart")
+    auftragsart = item.get("auftragsart")
+
+    ts = item.get("zeitstempel")
+    booking_date = None
+    if isinstance(ts, str) and len(ts) >= 10:
+        booking_date = ts[:10]
+
+    # id: prefer execution number (seems stable), then order key, then numeric id.
+    tid = item.get("ausfuehrungsnummer") or item.get("keyAuftrag")
+    if isinstance(tid, str) and tid.strip():
+        tid = tid.strip()
+    else:
+        tid = item.get("id")
+        tid = str(tid) if tid is not None else None
+
+    # Determine kind/action
+    kind = None
+    action = None
+    if isinstance(auftragsart, str) and auftragsart.strip():
+        kind = auftragsart.strip().lower()
+        if kind == "verkauf":
+            action = "sell"
+            kind = "trade"
+        elif kind == "kauf":
+            action = "buy"
+            kind = "trade"
+        elif kind == "ertrag":
+            action = "dividend"
+            kind = "dividend"
+
+    sec_name = item.get("wpBezeichnung")
+    isin = item.get("isin")
+
+    qty = item.get("ausfuehrungsMenge")
+    if qty is None:
+        qty = item.get("menge")
+
+    unit = item.get("masseinheit")
+
+    kurs = item.get("kurs") if isinstance(item.get("kurs"), dict) else {}
+    price_amt = kurs.get("amount")
+    price_cur = kurs.get("currency") or kurs.get("currencyCode")
+
+    refs = {}
+    if isinstance(item.get("keyAuftrag"), str) and item.get("keyAuftrag").strip():
+        refs["orderKey"] = item.get("keyAuftrag").strip()
+    if isinstance(item.get("ausfuehrungsnummer"), str) and item.get("ausfuehrungsnummer").strip():
+        refs["executionNumber"] = item.get("ausfuehrungsnummer").strip()
+    if isinstance(item.get("keyFremdsystem"), str) and item.get("keyFremdsystem").strip():
+        refs["externalKey"] = item.get("keyFremdsystem").strip()
+    if isinstance(item.get("positionskey"), str) and item.get("positionskey").strip():
+        refs["positionKey"] = item.get("positionskey").strip()
+
+    out = {
+        "id": tid,
+        "bookingDate": booking_date,
+        "timestamp": ts,
+        "kind": kind,
+        "action": action,
+        "security": {"isin": isin, "name": sec_name},
+        "quantity": qty,
+        "unit": unit,
+        "price": {"amount": price_amt, "currency": price_cur} if (price_amt is not None and price_cur) else None,
+        "venue": item.get("handelsplatz"),
+        "status": item.get("statustext") or ("executed" if bewegungsart == "AUSFUEHRUNG" else None),
+        "references": refs or None,
+        "document": {
+            "available": bool(item.get("belegVorhanden")),
+            "key": item.get("belegkey"),
+            "timestamp": item.get("belegtimestamp"),
+        },
+    }
+
+    # prune None keys recursively
+    pruned = _prune_none(out)
+    return pruned
+
+
+def canonicalize_depot_transactions_elba(payload: dict, depot_id: str, date_from: str, date_to: str, raw_path: Path | None = None) -> dict:
+    items = payload.get("positionen") if isinstance(payload, dict) else None
+    if not isinstance(items, list):
+        items = []
+
+    out = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+
+        bewegungsart = str(it.get("bewegungsart") or "").upper()
+        auftragsart = str(it.get("auftragsart") or "")
+
+        # Default filter: executed trades + dividends/earnings
+        if bewegungsart == "AUSFUEHRUNG":
+            pass
+        elif bewegungsart == "UMSATZ" and auftragsart.strip().lower() == "ertrag":
+            pass
+        else:
+            continue
+
+        c = _canonicalize_elba_depot_transaction(it)
+        if c:
+            out.append(c)
+
+    wrapper = {
+        "institution": "elba",
+        "account": {"id": str(depot_id)},
+        "range": {"from": date_from, "until": date_to},
+        "fetchedAt": _now_iso_local(),
+        "transactions": out,
+    }
+
+    if DEBUG_ENABLED and raw_path:
+        wrapper["rawPath"] = str(raw_path)
+
+    return wrapper
+
+
+def cmd_portfolio(headless=True, depot_id=None, as_of_date=None, json_output=False):
+    """Fetch depot portfolio positions."""
+    if not depot_id:
+        print("Missing required argument: --depot-id")
+        sys.exit(1)
+
+    elba_id, pin = load_credentials()
+    if not elba_id or not pin:
+        print("Credentials not found. Run 'setup' first.")
+        sys.exit(1)
+
+    if not PROFILE_DIR.exists():
+        PROFILE_DIR.mkdir(parents=True)
+
+    with sync_playwright() as p:
+        context = p.chromium.launch_persistent_context(
+            user_data_dir=str(PROFILE_DIR),
+            headless=headless,
+            viewport={"width": 1280, "height": 800},
+        )
+
+        page = context.new_page()
+        try:
+            print("[portfolio] Attempting to access dashboard/documents (reuse session)...", flush=True)
+            try:
+                page.goto(URL_DOCUMENTS, wait_until="domcontentloaded")
+                time.sleep(2)
+            except Exception:
+                pass
+
+            token = _get_bearer_token(context, page)
+            if not token:
+                print("[portfolio] Token not found, performing login...", flush=True)
+                if not login(page, elba_id, pin, timeout_seconds=LOGIN_TIMEOUT):
+                    print("[portfolio] Login failed.")
+                    sys.exit(1)
+                token = _get_bearer_token(context, page)
+
+            if not token:
+                print("[portfolio] ERROR: Could not extract bearer token")
+                sys.exit(1)
+
+            cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
+            payload, status_code = _fetch_portfolio_positions(token, cookies, str(depot_id), as_of_date)
+
+            if status_code == 401:
+                print("[portfolio] Token rejected (401). Clearing cache and re-authenticating...", flush=True)
+                _clear_cached_token()
+                if not login(page, elba_id, pin, timeout_seconds=LOGIN_TIMEOUT):
+                    print("[portfolio] Login failed.")
+                    sys.exit(1)
+                token = _get_bearer_token(context, page)
+                cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
+                payload, status_code = _fetch_portfolio_positions(token, cookies, str(depot_id), as_of_date)
+
+            if status_code != 200:
+                print("[portfolio] Failed to fetch portfolio", flush=True)
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+                sys.exit(1)
+
+            canonical = _canonicalize_elba_portfolio(payload if isinstance(payload, dict) else {}, depot_id=str(depot_id), as_of_date=as_of_date)
+
+            if DEBUG_ENABLED:
+                raw_path = _write_debug_json(f"portfolio-raw-{depot_id}", payload)
+                canonical["rawPath"] = str(raw_path) if raw_path else None
+                canonical["raw"] = payload
+
+            if json_output:
+                print(json.dumps(canonical, ensure_ascii=False, indent=2))
+            else:
+                # Human summary
+                print(json.dumps(canonical, ensure_ascii=False, indent=2))
+
+        finally:
+            context.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Raiffeisen ELBA Automation")
     # Global flags (keep ordering consistent with george.py)
     parser.add_argument("--visible", action="store_true", help="Show browser")
-    parser.add_argument("--login-timeout", type=int, default=DEFAULT_LOGIN_TIMEOUT, help="Seconds to wait for pushTAN approval (default: 180)")
+    parser.add_argument("--login-timeout", type=int, default=DEFAULT_LOGIN_TIMEOUT, help="Seconds to wait for pushTAN approval (default: 300)")
     parser.add_argument("--debug", action="store_true", help="Save bank-native payloads to ~/.moltbot/raiffeisen-elba/debug (default: off)")
 
-    subparsers = parser.add_subparsers(dest="command")
-
-    subparsers.add_parser("setup", help="Configure credentials")
+    subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("login", help="Login and save session")
-
     subparsers.add_parser("logout", help="Clear session")
 
     accounts_parser = subparsers.add_parser("accounts", help="List accounts")
     accounts_parser.add_argument("--json", action="store_true", help="Output as JSON")
-
-    download_parser = subparsers.add_parser("download", help="Download documents from mailbox")
-    download_parser.add_argument("--json", action="store_true", help="Output as JSON")
-    download_parser.add_argument("-o", "--output", help="Output directory for documents")
-    download_parser.add_argument("--from", dest="date_from", help="Start date (DD.MM.YYYY)")
-    download_parser.add_argument("--until", dest="date_to", help="End date (DD.MM.YYYY)")
 
     transactions_parser = subparsers.add_parser("transactions", help="Download transactions")
     transactions_parser.add_argument("--account", required=True, help="Account IBAN")
@@ -1710,13 +2096,6 @@ def main():
     transactions_parser.add_argument("--until", dest="date_to", required=True, help="End date (YYYY-MM-DD)")
     transactions_parser.add_argument("--format", dest="fmt", choices=["csv", "json"], default="json", help="Output format")
     transactions_parser.add_argument("--out", dest="output", help="Output file base or directory")
-
-    portfolio_parser = subparsers.add_parser("portfolio", help="Fetch depot portfolio positions")
-    portfolio_parser.add_argument("--depot-id", dest="depot_id", required=True, help="Depot ID")
-    portfolio_parser.add_argument("--date", dest="as_of_date", help="As-of date (YYYY-MM-DD)")
-    portfolio_parser.add_argument("--json", action="store_true", help="Output as JSON")
-
-    subparsers.add_parser("balances", help="List balances")
 
     args = parser.parse_args()
 
@@ -1730,22 +2109,12 @@ def main():
     except Exception:
         LOGIN_TIMEOUT = DEFAULT_LOGIN_TIMEOUT
 
-    if args.command == "setup":
-        cmd_setup()
-    elif args.command == "login":
+    if args.command == "login":
         cmd_login(headless=not args.visible)
     elif args.command == "logout":
         cmd_logout()
     elif args.command == "accounts":
         cmd_accounts(headless=not args.visible, json_output=getattr(args, 'json', False))
-    elif args.command == "download":
-        cmd_download(
-            headless=not args.visible,
-            output_dir=getattr(args, 'output', None),
-            date_from=getattr(args, 'date_from', None),
-            date_to=getattr(args, 'date_to', None),
-            json_output=getattr(args, 'json', False)
-        )
     elif args.command == "transactions":
         cmd_transactions(
             headless=not args.visible,
@@ -1755,17 +2124,9 @@ def main():
             output=getattr(args, 'output', None),
             fmt=getattr(args, 'fmt', "json")
         )
-    elif args.command == "portfolio":
-        cmd_portfolio(
-            headless=not args.visible,
-            depot_id=getattr(args, 'depot_id', None),
-            as_of_date=getattr(args, 'as_of_date', None),
-            json_output=getattr(args, 'json', False)
-        )
-    elif args.command == "balances":
-        print("Not implemented yet. Please run 'login' first to ensure access.")
     else:
         parser.print_help()
+
 
 if __name__ == "__main__":
     main()
