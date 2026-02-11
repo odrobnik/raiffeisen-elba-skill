@@ -29,7 +29,23 @@ DEFAULT_LOGIN_TIMEOUT = 300  # seconds (standard: 5 minutes)
 LOGIN_TIMEOUT = DEFAULT_LOGIN_TIMEOUT
 
 BASE_DIR = Path(__file__).parent.parent
-CREDENTIALS_DIR = Path.home() / "clawd" / "raiffeisen-elba"
+
+
+def _find_workspace_root() -> Path:
+    """Walk up from script location to find workspace root (parent of 'skills/')."""
+    env = os.environ.get("RAIFFEISEN_ELBA_WORKSPACE")
+    if env:
+        return Path(env)
+    d = Path(__file__).resolve().parent
+    for _ in range(6):
+        if (d / "skills").is_dir() and d != d.parent:
+            return d
+        d = d.parent
+    return Path.cwd()
+
+
+WORKSPACE_ROOT = _find_workspace_root()
+CREDENTIALS_DIR = WORKSPACE_ROOT / "raiffeisen-elba"
 CREDENTIALS_FILE = CREDENTIALS_DIR / ".env"
 PROFILE_DIR = Path.home() / ".moltbot" / "raiffeisen-elba" / ".pw-profile"
 SESSION_URL_FILE = PROFILE_DIR / "last_url.txt"
