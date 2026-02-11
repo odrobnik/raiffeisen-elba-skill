@@ -4,7 +4,7 @@ description: "Automate Raiffeisen ELBA online banking: login/logout, list accoun
 summary: "Raiffeisen ELBA banking automation: login, accounts, transactions."
 version: 1.1.0
 homepage: https://github.com/clawdbot-skills/raiffeisen-elba
-metadata: {"moltbot": {"emoji": "🏦", "requires": {"bins": ["python3", "playwright"]}}}
+metadata: {"openclaw": {"emoji": "🏦", "requires": {"bins": ["python3", "playwright"]}}}
 ---
 
 # Raiffeisen ELBA Banking Automation
