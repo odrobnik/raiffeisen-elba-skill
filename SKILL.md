@@ -15,13 +15,17 @@ metadata:
 
 # Raiffeisen ELBA Banking Automation
 
-Unified UX for ELBA: **login**, **logout**, **accounts**, **transactions**.
+Fetch current account balances, securities depot positions, and transactions for all account types in JSON format for automatic processing. Uses Playwright to automate Raiffeisen ELBA online banking.
 
 **Entry point:** `{baseDir}/scripts/elba.py`
 
+## Authentication
+
+Requires **2FA via the Raiffeisen pushTAN app** on your iPhone. When the script initiates login, a confirmation code is displayed. Open the Raiffeisen app and approve the pushTAN request if the code matches.
+
 ## Credentials
 
-Set environment variables **or** create `workspace/raiffeisen-elba/config.json`:
+Set environment variables **or** create `{workspace}/raiffeisen-elba/config.json`:
 
 ```json
 {
@@ -42,6 +46,5 @@ python3 {baseDir}/scripts/elba.py transactions --account <iban> --from YYYY-MM-D
 ```
 
 ## Notes
-- Uses Playwright (pushTAN approval during login).
 - Session state stored in `~/.openclaw/raiffeisen-elba/` with restrictive permissions (dirs 700, files 600).
 - Output paths (`--out`) are restricted to the workspace or `/tmp`.
