@@ -14,6 +14,7 @@ import re
 import argparse
 from datetime import datetime
 import json
+import subprocess
 from pathlib import Path
 import requests
 
@@ -32,12 +33,11 @@ BASE_DIR = Path(__file__).parent.parent
 
 
 def _find_workspace_root() -> Path:
-    """Walk up from script location to find workspace root (parent of 'skills/')."""
-    env = os.environ.get("RAIFFEISEN_ELBA_WORKSPACE")
+    """Find the workspace root (directory containing 'skills/')."""
+    env = os.environ.get("OPENCLAW_WORKSPACE")
     if env:
-        return Path(env)
-    
-    # Prefer CWD if it looks like a workspace (handles symlinks correctly)
+        return Path(env).resolve()
+
     cwd = Path.cwd()
     if (cwd / "skills").is_dir():
         return cwd
@@ -47,21 +47,91 @@ def _find_workspace_root() -> Path:
         if (d / "skills").is_dir() and d != d.parent:
             return d
         d = d.parent
-    return Path.cwd()
+    return cwd
 
+
+def _set_strict_umask() -> None:
+    """Best-effort hardening: ensure new files/dirs are private by default."""
+    try:
+        os.umask(0o077)
+    except Exception:
+        pass
+
+
+def _harden_path(p: Path) -> None:
+    """Best-effort: set restrictive permissions on a path."""
+    try:
+        if p.is_dir():
+            os.chmod(p, 0o700)
+        elif p.is_file() and not p.is_symlink():
+            os.chmod(p, 0o600)
+    except Exception:
+        pass
+
+
+def _safe_filename_component(value: str, default: str = "value") -> str:
+    """Sanitize a user-controlled string for safe use in filenames."""
+    s = str(value or "").strip()
+    if not s:
+        return default
+    s = s.replace("/", "_").replace("\\", "_")
+    s = re.sub(r'\.\.+', '.', s)
+    s = re.sub(r"[^A-Za-z0-9._-]+", "_", s)
+    s = s.strip("._-")
+    return (s or default)[:80]
+
+
+def _safe_download_filename(suggested: str) -> str:
+    """Sanitize a Playwright suggested_filename against path traversal."""
+    name = Path(suggested).name  # strip any directory components
+    name = name.replace("\x00", "")
+    if not name or name in (".", ".."):
+        name = "download"
+    return _safe_filename_component(name, default="download")
+
+
+def _safe_output_path(raw: str, workspace: Path) -> Path:
+    """Validate that an output path is within the workspace or /tmp."""
+    p = Path(raw).expanduser().resolve()
+    tmp = Path("/tmp").resolve()
+    if p == workspace or p.is_relative_to(workspace):
+        return p
+    if p == tmp or p.is_relative_to(tmp):
+        return p
+    raise ValueError(
+        f"Output path '{raw}' is outside the workspace and /tmp. "
+        f"Allowed: {workspace} or /tmp"
+    )
+
+
+_set_strict_umask()
 
 WORKSPACE_ROOT = _find_workspace_root()
-CREDENTIALS_DIR = WORKSPACE_ROOT / "raiffeisen-elba"
-CREDENTIALS_FILE = CREDENTIALS_DIR / ".env"
-PROFILE_DIR = Path.home() / ".moltbot" / "raiffeisen-elba" / ".pw-profile"
+CONFIG_DIR = WORKSPACE_ROOT / "raiffeisen-elba"
+CONFIG_FILE = CONFIG_DIR / "config.json"
+def _state_root() -> Path:
+    new = Path.home() / ".openclaw" / "raiffeisen-elba"
+    legacy = Path.home() / ".moltbot" / "raiffeisen-elba"
+    return legacy if legacy.exists() and not new.exists() else new
+
+STATE_ROOT = _state_root()
+PROFILE_DIR = STATE_ROOT / ".pw-profile"
 SESSION_URL_FILE = PROFILE_DIR / "last_url.txt"
 TOKEN_CACHE_FILE = PROFILE_DIR / "token.json"
-DEBUG_DIR = Path.home() / ".moltbot" / "raiffeisen-elba" / "debug"
+DEBUG_DIR = STATE_ROOT / "debug"
 
 # Ephemeral outputs (documents, canonical exports) go to /tmp by default.
-# Override with MOLTBOT_TMP if you want a different temp root.
-_TMP_ROOT = Path(os.environ.get("MOLTBOT_TMP", "/tmp")).expanduser().resolve()
-DEFAULT_OUTPUT_DIR = _TMP_ROOT / "moltbot" / "elba"
+# Override with OPENCLAW_TMP if you want a different temp root.
+_TMP_ROOT = Path(os.environ.get("OPENCLAW_TMP") or "/tmp").expanduser().resolve()
+DEFAULT_OUTPUT_DIR = _TMP_ROOT / "openclaw" / "elba"
+
+# Harden state directory permissions (best-effort)
+if STATE_ROOT.exists():
+    _harden_path(STATE_ROOT)
+    if PROFILE_DIR.exists():
+        _harden_path(PROFILE_DIR)
+    if TOKEN_CACHE_FILE.exists():
+        _harden_path(TOKEN_CACHE_FILE)
 
 URL_LOGIN = "https://sso.raiffeisen.at/mein-login/identify"
 URL_DASHBOARD = "https://mein.elba.raiffeisen.at/bankingws-widgetsystem/meine-produkte/dashboard"
@@ -80,19 +150,43 @@ REGION_MAPPING = {
 }
 
 def load_credentials():
-    """Load credentials from the specified .env file."""
-    if not CREDENTIALS_FILE.exists():
-        return None, None
-    
-    # Load explicitly
-    config = {}
-    with open(CREDENTIALS_FILE, 'r') as f:
-        for line in f:
-            if '=' in line:
-                key, value = line.strip().split('=', 1)
-                config[key] = value.strip().strip("'").strip('"')
-    
-    return config.get('ELBA_ID'), config.get('ELBA_PIN')
+    """Load credentials from env vars or config.json.
+
+    Priority: env vars > config.json.
+    """
+    elba_id = os.environ.get("RAIFFEISEN_ELBA_ID")
+    pin = os.environ.get("RAIFFEISEN_ELBA_PIN")
+    if elba_id and pin:
+        return elba_id, pin
+
+    if CONFIG_FILE.exists():
+        try:
+            cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            elba_id = cfg.get("elba_id")
+            pin = cfg.get("pin")
+            if elba_id and pin:
+                return elba_id, pin
+        except Exception:
+            pass
+
+    # Legacy fallback: .env file (deprecated — migrate to config.json)
+    legacy_env = CONFIG_DIR / ".env"
+    if legacy_env.exists():
+        config = {}
+        for line in legacy_env.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            config[key.strip()] = value.strip().strip("'").strip('"')
+
+        elba_id = config.get('ELBA_ID')
+        pin = config.get('ELBA_PIN')
+        if elba_id and pin:
+            print("[credentials] Loaded from legacy .env — consider migrating to config.json", file=sys.stderr)
+            return elba_id, pin
+
+    return None, None
 
 
 
@@ -1213,7 +1307,7 @@ def fetch_documents(page, output_dir=None, date_from=None, date_to=None):
                         time.sleep(0.5)
                     
                     download = download_info.value
-                    filename = download.suggested_filename
+                    filename = _safe_download_filename(download.suggested_filename)
                     
                     # Handle duplicate filenames by adding (2), (3), etc.
                     base_filepath = output_dir / filename
@@ -1274,32 +1368,33 @@ def cmd_setup():
     """Interactive setup wizard."""
     print("Raiffeisen ELBA Setup")
     print("---------------------")
-    
+
     # Ensure directories
-    if not CREDENTIALS_DIR.exists():
-        CREDENTIALS_DIR.mkdir(parents=True)
-        print(f"Created {CREDENTIALS_DIR}")
-        
+    if not CONFIG_DIR.exists():
+        CONFIG_DIR.mkdir(parents=True)
+        _harden_path(CONFIG_DIR)
+        print(f"Created {CONFIG_DIR}")
+
     elba_id = input("Enter ELBA-Verfügernummer (e.g., ELVIE32V...): ").strip()
     pin = input("Enter PIN (5 digits): ").strip()
-    
+
     if not elba_id or not pin:
         print("Error: ID and PIN are required.")
         return
-        
-    # Write to .env
-    with open(CREDENTIALS_FILE, 'w') as f:
-        f.write(f"ELBA_ID={elba_id}\n")
-        f.write(f"ELBA_PIN={pin}\n")
-    
-    print(f"Credentials saved to {CREDENTIALS_FILE}")
-    
+
+    # Write to config.json
+    cfg = {"elba_id": elba_id, "pin": pin}
+    CONFIG_FILE.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    _harden_path(CONFIG_FILE)
+
+    print(f"Credentials saved to {CONFIG_FILE}")
+
     # Verify Playwright
     print("Verifying Playwright installation...")
     try:
         import playwright
-        os.system("playwright install chromium")
-    except ImportError:
+        subprocess.run(["playwright", "install", "chromium"], check=False)
+    except (ImportError, FileNotFoundError):
         print("Please install playwright: pip3 install playwright")
 
 def cmd_login(headless=True):
@@ -1695,14 +1790,15 @@ def cmd_transactions(headless=True, account=None, date_from=None, date_to=None, 
                 print(f"[debug] Raw transactions saved to: {raw_path}")
 
             # Resolve output base (even if there are 0 transactions)
-            acc_clean = account.replace(" ", "")
+            acc_clean = _safe_filename_component(account, default="account")
             if output:
-                out_path = Path(output)
-                if out_path.is_dir() or (str(output).endswith(os.sep)):
+                out_path = _safe_output_path(output, WORKSPACE_ROOT)
+                if out_path.is_dir() or str(output).endswith(os.sep):
                     out_path.mkdir(parents=True, exist_ok=True)
                     base_name = f"transactions_{acc_clean}_{date_from}_{date_to}"
                     file_base = out_path / base_name
                 else:
+                    _safe_output_path(str(out_path.parent), WORKSPACE_ROOT)
                     out_path.parent.mkdir(parents=True, exist_ok=True)
                     file_base = out_path
             else:
@@ -2102,7 +2198,7 @@ def main():
     # Global flags (keep ordering consistent with george.py)
     parser.add_argument("--visible", action="store_true", help="Show browser")
     parser.add_argument("--login-timeout", type=int, default=DEFAULT_LOGIN_TIMEOUT, help="Seconds to wait for pushTAN approval (default: 300)")
-    parser.add_argument("--debug", action="store_true", help="Save bank-native payloads to ~/.moltbot/raiffeisen-elba/debug (default: off)")
+    parser.add_argument("--debug", action="store_true", help="Save bank-native payloads to ~/.openclaw/raiffeisen-elba/debug (default: off)")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 

@@ -8,7 +8,12 @@ import sys
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
-PROFILE_DIR = Path.home() / ".moltbot" / "raiffeisen-elba" / ".pw-profile"
+def _state_root() -> Path:
+    new = Path.home() / ".openclaw" / "raiffeisen-elba"
+    legacy = Path.home() / ".moltbot" / "raiffeisen-elba"
+    return legacy if legacy.exists() and not new.exists() else new
+
+PROFILE_DIR = _state_root() / ".pw-profile"
 
 def main():
     if not PROFILE_DIR.exists():

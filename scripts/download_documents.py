@@ -4,6 +4,7 @@ Download all collected documents via API
 """
 import sys
 import json
+import re
 import requests
 import time
 from pathlib import Path
@@ -82,13 +83,25 @@ def get_bearer_token_from_browser(page):
     
     return captured_token['value']
 
+def _safe_filename_component(value, default="file"):
+    """Sanitize a string for safe use in filenames."""
+    s = str(value or "").strip()
+    if not s:
+        return default
+    s = s.replace("/", "_").replace("\\", "_")
+    s = re.sub(r'\.\.+', '.', s)
+    s = re.sub(r"[^A-Za-z0-9._-]+", "_", s)
+    s = s.strip("._-")
+    return (s or default)[:80]
+
+
 def download_document(doc, token, cookies, output_dir):
     """Download a single document"""
     system_id = doc['systemId']
     doc_id = doc['dokumentenId']
     version_id = doc.get('versionsId')
-    file_name = doc.get('dateiName', doc_id)
-    date = doc.get('erstellungsDatum', '')[:10]  # Extract date part
+    file_name = _safe_filename_component(doc.get('dateiName', doc_id))
+    date = _safe_filename_component(doc.get('erstellungsDatum', '')[:10], default="unknown")
     
     # Construct filename: YYYY-MM-DD_filename.pdf
     safe_filename = f"{date}_{file_name}.pdf"
