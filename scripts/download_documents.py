@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from elba import load_credentials, login, URL_DOCUMENTS, PROFILE_DIR
+from elba import load_credentials, login, URL_DOCUMENTS, PROFILE_DIR, _safe_output_path, _safe_download_filename, WORKSPACE_ROOT
 
 try:
     from playwright.sync_api import sync_playwright
@@ -154,9 +154,9 @@ def main():
     
     print(f"[main] Loaded {len(documents)} documents from {api_file}")
     
-    # Create output directory
-    output_dir = Path("downloads")
-    output_dir.mkdir(exist_ok=True)
+    # Create output directory (sandboxed to workspace)
+    output_dir = _safe_output_path(str(WORKSPACE_ROOT / "raiffeisen-elba" / "downloads"), WORKSPACE_ROOT)
+    output_dir.mkdir(parents=True, exist_ok=True)
     print(f"[main] Downloading to: {output_dir.absolute()}")
     
     # Get credentials and login to get token

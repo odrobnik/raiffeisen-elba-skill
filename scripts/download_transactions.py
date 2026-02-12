@@ -11,7 +11,7 @@ from pathlib import Path
 from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent))
-from elba import load_credentials, login, URL_DOCUMENTS, PROFILE_DIR, _get_bearer_token, _clear_cached_token
+from elba import load_credentials, login, URL_DOCUMENTS, PROFILE_DIR, _get_bearer_token, _clear_cached_token, _safe_output_path, WORKSPACE_ROOT
 
 try:
     from playwright.sync_api import sync_playwright
@@ -417,13 +417,15 @@ def main():
             print(f"Fetched {len(transactions)} transactions")
             print(f"{'='*60}\n")
             
-            # Export
+            # Export (sandboxed to workspace or /tmp)
             if args.format in ['csv', 'both']:
-                csv_file = Path(f"{args.output}.csv")
+                csv_file = _safe_output_path(f"{args.output}.csv", WORKSPACE_ROOT)
+                csv_file.parent.mkdir(parents=True, exist_ok=True)
                 export_to_csv(transactions, csv_file)
             
             if args.format in ['json', 'both']:
-                json_file = Path(f"{args.output}.json")
+                json_file = _safe_output_path(f"{args.output}.json", WORKSPACE_ROOT)
+                json_file.parent.mkdir(parents=True, exist_ok=True)
                 export_to_json(transactions, json_file)
             
             print(f"\n[main] Export complete!")

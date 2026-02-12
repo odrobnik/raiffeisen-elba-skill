@@ -9,7 +9,7 @@ import requests
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from elba import load_credentials, login, URL_DOCUMENTS, PROFILE_DIR
+from elba import load_credentials, login, URL_DOCUMENTS, PROFILE_DIR, _safe_output_path, WORKSPACE_ROOT
 
 try:
     from playwright.sync_api import sync_playwright
@@ -232,14 +232,15 @@ def main():
             print(f"COLLECTION COMPLETE: {len(all_docs)} documents")
             print(f"{'='*60}")
             
-            # Save raw API response
-            output_file = Path("elba_documents_api.json")
+            # Save raw API response (sandboxed to workspace or /tmp)
+            output_file = _safe_output_path(str(WORKSPACE_ROOT / "raiffeisen-elba" / "elba_documents_api.json"), WORKSPACE_ROOT)
+            output_file.parent.mkdir(parents=True, exist_ok=True)
             with open(output_file, 'w') as f:
                 json.dump(all_docs, f, indent=2, ensure_ascii=False)
             print(f"\nAPI response saved to: {output_file}")
             
             # Create a simple list
-            text_file = Path("elba_documents_api_list.txt")
+            text_file = _safe_output_path(str(WORKSPACE_ROOT / "raiffeisen-elba" / "elba_documents_api_list.txt"), WORKSPACE_ROOT)
             with open(text_file, 'w') as f:
                 for i, doc in enumerate(all_docs, 1):
                     # Try to extract name from different possible fields
