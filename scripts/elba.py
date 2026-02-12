@@ -109,12 +109,7 @@ _set_strict_umask()
 WORKSPACE_ROOT = _find_workspace_root()
 CONFIG_DIR = WORKSPACE_ROOT / "raiffeisen-elba"
 CONFIG_FILE = CONFIG_DIR / "config.json"
-def _state_root() -> Path:
-    new = Path.home() / ".openclaw" / "raiffeisen-elba"
-    legacy = Path.home() / ".moltbot" / "raiffeisen-elba"
-    return legacy if legacy.exists() and not new.exists() else new
-
-STATE_ROOT = _state_root()
+STATE_ROOT = WORKSPACE_ROOT / "raiffeisen-elba"
 PROFILE_DIR = STATE_ROOT / ".pw-profile"
 SESSION_URL_FILE = PROFILE_DIR / "last_url.txt"
 TOKEN_CACHE_FILE = PROFILE_DIR / "token.json"
@@ -2198,7 +2193,7 @@ def main():
     # Global flags (keep ordering consistent with george.py)
     parser.add_argument("--visible", action="store_true", help="Show browser")
     parser.add_argument("--login-timeout", type=int, default=DEFAULT_LOGIN_TIMEOUT, help="Seconds to wait for pushTAN approval (default: 300)")
-    parser.add_argument("--debug", action="store_true", help="Save bank-native payloads to ~/.openclaw/raiffeisen-elba/debug (default: off)")
+    parser.add_argument("--debug", action="store_true", help="Save bank-native payloads to workspace/raiffeisen-elba/debug (default: off)")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
