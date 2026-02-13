@@ -38,3 +38,9 @@ Or create `workspace/raiffeisen-elba/config.json`:
 - Session state stored in `~/.openclaw/raiffeisen-elba/` with restrictive permissions.
 - Output paths (`--out`) are restricted to the workspace or `/tmp`.
 - See `SKILL.md` for agent usage guidance.
+
+## Documentation
+
+- [SKILL.md](SKILL.md) — agent-facing reference (commands, behavior, limitations)
+- [SETUP.md](SETUP.md) — prerequisites, configuration, and setup instructions
+- [ClawHub](https://www.clawhub.com/skills/raiffeisen-elba) — install via ClawHub registry
