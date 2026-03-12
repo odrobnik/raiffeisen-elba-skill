@@ -172,23 +172,6 @@ def load_credentials():
         except Exception:
             pass
 
-    # Legacy fallback: .env file (deprecated — migrate to config.json)
-    legacy_env = CONFIG_DIR / ".env"
-    if legacy_env.exists():
-        config = {}
-        for line in legacy_env.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            config[key.strip()] = value.strip().strip("'").strip('"')
-
-        elba_id = config.get('ELBA_ID')
-        pin = config.get('ELBA_PIN')
-        if elba_id and pin:
-            print("[credentials] Loaded from legacy .env — consider migrating to config.json", file=sys.stderr)
-            return elba_id, pin
-
     return None, None
 
 
