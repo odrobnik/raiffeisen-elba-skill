@@ -28,16 +28,7 @@ python3 -m playwright install chromium
 
 ### Credentials
 
-**Method 1: Environment Variables (Recommended)**
-
-```bash
-export RAIFFEISEN_ELBA_ID="your-elba-id"
-export RAIFFEISEN_ELBA_PIN="your-pin"
-```
-
-Add to your shell profile (`.zshrc`, `.bashrc`) for persistence.
-
-**Method 2: Config File**
+**Config File**
 
 Create `~/clawd/raiffeisen-elba/config.json`:
 ```json
@@ -51,8 +42,6 @@ Set restrictive permissions:
 ```bash
 chmod 600 ~/clawd/raiffeisen-elba/config.json
 ```
-
-Environment variables take precedence over `config.json`.
 
 ### State Directory
 
@@ -81,12 +70,6 @@ Output files (`--out` parameter) are restricted to:
 - Temporary directory (`/tmp/`)
 
 Attempts to write outside these locations will fail.
-
-### No .env Loading
-
-For security, the skill does **not** load `.env` files from the workspace. Credentials must be:
-- Environment variables (`RAIFFEISEN_ELBA_ID`, `RAIFFEISEN_ELBA_PIN`), or
-- Config file (`~/clawd/raiffeisen-elba/config.json`)
 
 ## Authentication Flow
 

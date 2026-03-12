@@ -153,15 +153,7 @@ REGION_MAPPING = {
 }
 
 def load_credentials():
-    """Load credentials from env vars or config.json.
-
-    Priority: env vars > config.json.
-    """
-    elba_id = os.environ.get("RAIFFEISEN_ELBA_ID")
-    pin = os.environ.get("RAIFFEISEN_ELBA_PIN")
-    if elba_id and pin:
-        return elba_id, pin
-
+    """Load credentials from config.json."""
     if CONFIG_FILE.exists():
         try:
             cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
@@ -171,7 +163,6 @@ def load_credentials():
                 return elba_id, pin
         except Exception:
             pass
-
     return None, None
 
 

@@ -10,7 +10,6 @@ metadata:
     requires:
       bins: ["python3"]
       python: ["requests", "playwright"]
-      env: ["RAIFFEISEN_ELBA_ID", "RAIFFEISEN_ELBA_PIN"]
 ---
 
 # Raiffeisen ELBA Banking Automation
