@@ -856,7 +856,9 @@ def _save_cached_token(token):
         return
     try:
         TOKEN_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _harden_path(TOKEN_CACHE_FILE.parent)
         TOKEN_CACHE_FILE.write_text(json.dumps({"token": token}), encoding="utf-8")
+        _harden_path(TOKEN_CACHE_FILE)
     except Exception:
         pass
 
@@ -1394,6 +1396,7 @@ def cmd_login(headless=True):
         # Create persistent context
         if not PROFILE_DIR.exists():
             PROFILE_DIR.mkdir(parents=True)
+            _harden_path(PROFILE_DIR)
             
         context = p.chromium.launch_persistent_context(
             user_data_dir=str(PROFILE_DIR),
@@ -1430,6 +1433,7 @@ def cmd_accounts(headless=True, json_output=False):
     # Ensure profile dir exists
     if not PROFILE_DIR.exists():
         PROFILE_DIR.mkdir(parents=True)
+        _harden_path(PROFILE_DIR)
     
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
@@ -1557,6 +1561,7 @@ def cmd_download(headless=True, output_dir=None, date_from=None, date_to=None, j
     # Ensure profile dir exists
     if not PROFILE_DIR.exists():
         PROFILE_DIR.mkdir(parents=True)
+        _harden_path(PROFILE_DIR)
     
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
@@ -1721,6 +1726,7 @@ def cmd_transactions(headless=True, account=None, date_from=None, date_to=None, 
 
     if not PROFILE_DIR.exists():
         PROFILE_DIR.mkdir(parents=True)
+        _harden_path(PROFILE_DIR)
 
     from download_transactions import fetch_transactions_all
 
@@ -2115,6 +2121,7 @@ def cmd_portfolio(headless=True, depot_id=None, as_of_date=None, json_output=Fal
 
     if not PROFILE_DIR.exists():
         PROFILE_DIR.mkdir(parents=True)
+        _harden_path(PROFILE_DIR)
 
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(

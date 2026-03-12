@@ -64,6 +64,8 @@ The `logout` command deletes `.pw-profile/` to clear session state.
 
 ## Security
 
+*Please see [SECURITY.md](SECURITY.md) for details on the skill's browser automation, token handling, and overall security policy.*
+
 ### File Permissions
 
 The skill automatically sets restrictive permissions:

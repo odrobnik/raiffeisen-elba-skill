@@ -332,6 +332,11 @@ def main():
     
     if not PROFILE_DIR.exists():
         PROFILE_DIR.mkdir(parents=True)
+        try:
+            from elba import _harden_path
+            _harden_path(PROFILE_DIR)
+        except:
+            pass
     
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
