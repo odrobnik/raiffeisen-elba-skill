@@ -1,5 +1,7 @@
 # raiffeisen-elba - Setup Instructions
 
+> **Disclaimer:** Note that no passwords are stored. The custom username or user number is used to trigger the 2FA flow where the user approves the login separately. By itself the skill is unable to access any bank data. If you are not comfortable auditing the code or running browser automation that extracts tokens, do not install or run this skill with real bank credentials.
+
 ## Prerequisites
 
 ### Required Software
@@ -30,7 +32,7 @@ python3 -m playwright install chromium
 
 **Config File**
 
-Create `~/clawd/raiffeisen-elba/config.json`:
+Create `<WORKSPACE_ROOT>/raiffeisen-elba/config.json`:
 ```json
 {
   "elba_id": "YOUR_ELBA_ID",
@@ -40,12 +42,12 @@ Create `~/clawd/raiffeisen-elba/config.json`:
 
 Set restrictive permissions:
 ```bash
-chmod 600 ~/clawd/raiffeisen-elba/config.json
+chmod 600 <WORKSPACE_ROOT>/raiffeisen-elba/config.json
 ```
 
 ### State Directory
 
-Per-user state is stored in `~/clawd/raiffeisen-elba/`:
+Per-user state is stored in `<WORKSPACE_ROOT>/raiffeisen-elba/`:
 - `.pw-profile/` — Playwright browser profile (cookies, session)
 - Automatically created with restrictive permissions (dirs: 700, files: 600)
 
@@ -66,7 +68,7 @@ This prevents other users from accessing your banking credentials or session dat
 ### Output Paths
 
 Output files (`--out` parameter) are restricted to:
-- Workspace directory (`~/clawd/`)
+- Workspace directory (`<WORKSPACE_ROOT>/`)
 - Temporary directory (`/tmp/`)
 
 Attempts to write outside these locations will fail.
@@ -136,7 +138,7 @@ If commands fail with authentication errors:
 If Playwright fails to launch:
 ```bash
 # Delete browser profile
-rm -rf ~/clawd/raiffeisen-elba/.pw-profile
+rm -rf <WORKSPACE_ROOT>/raiffeisen-elba/.pw-profile
 
 # Reinstall Playwright browsers
 python3 -m playwright install chromium

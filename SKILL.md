@@ -14,6 +14,8 @@ metadata:
 
 # Raiffeisen ELBA Banking Automation
 
+> **Disclaimer:** Note that no passwords are stored. The custom username or user number is used to trigger the 2FA flow where the user approves the login separately. By itself the skill is unable to access any bank data. If you are not comfortable auditing the code or running browser automation that extracts tokens, do not install or run this skill with real bank credentials.
+
 Fetch current account balances, securities depot positions, and transactions for all account types in JSON format for automatic processing. Uses Playwright to automate Raiffeisen ELBA online banking.
 
 **Entry point:** `{baseDir}/scripts/elba.py`
