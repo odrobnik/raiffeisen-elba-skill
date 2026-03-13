@@ -1,29 +1,58 @@
 # Security Policy
 
-## Important Disclaimer
+## Data Handling Summary
 
-**If you are not comfortable auditing the code or running browser automation that extracts tokens, do not install or run this skill with real bank credentials.**
+| Data | Storage | Permissions | Lifetime |
+|------|---------|-------------|----------|
+| ELBA User ID | `config.json` | `0600` | Permanent (user-managed) |
+| 5-digit PIN | `config.json` | `0600` | Permanent (user-managed) |
+| Bearer Token | `.pw-profile/token.json` | `0600` | Ephemeral (minutes); deleted on `logout` |
+| Browser Session | `.pw-profile/` | `0700` | Ephemeral; deleted on `logout` |
 
-Note that no real passwords are required. The custom username or user number (and PIN) is used merely to trigger the 2FA flow, where the user must approve the login separately on their authorized mobile device. Without the manual pushTAN 2FA approval, the skill is unable to access any bank data.
+**Note:** The PIN alone cannot access your account. Every login requires manual 2FA approval (pushTAN) on your registered mobile device.
 
-## Core Architecture Risks and Mitigations
+## Why Browser Automation?
 
-The **raiffeisen-elba** skill is designed to automate banking operations for Raiffeisen ELBA (Austria). By its very nature, it handles highly sensitive data, including session tokens and financial records.
+Raiffeisen ELBA does not provide a public API for personal finance automation. The only way to programmatically retrieve account data is to:
 
-### 1. Browser Automation (Playwright) & Token Extraction
-The skill heavily relies on Playwright to emulate a real user logging into the Single Page Application (SPA). Additionally, it uses JavaScript evaluation (`page.evaluate`) to extract Bearer tokens directly from the browser's `localStorage` and `sessionStorage`, and intercepts network requests to capture authentication headers.
+1. Automate the browser login flow (Playwright)
+2. Complete 2FA via the official pushTAN mobile app
+3. Extract the Bearer token from the authenticated browser session
+4. Use that token to call ELBA's internal JSON APIs
 
-**Why is this necessary?**
-Raiffeisen ELBA does not offer a public, consumer-facing OAuth/API for automated personal finance. The only way to retrieve structured data automatically is to piggyback on the internal APIs used by the ELBA web dashboard. To do this, the skill must acquire the short-lived Bearer token generated during a valid browser login session (which requires interactive pushTAN 2FA approval).
+This approach is necessary but inherently sensitive. The skill implements multiple safeguards to minimize risk.
 
-**Mitigations in Place:**
-- **Strict File Permissions:** The Playwright profile directory (`.pw-profile`) and the token cache (`token.json`) are locked down to `0700` and `0600` permissions respectively. Only the executing user can read them.
-- **Strict umask:** A default umask of `0077` is applied at runtime to ensure all newly created files in the state directory are completely private from the moment they are written.
-- **Ephemeral State (Recommended Flow):** Users are strongly encouraged to always run `elba.py logout` at the end of their automation sequence. The `logout` command securely deletes the entire `.pw-profile` directory and any cached tokens, ensuring no valid session state remains on disk while the script is not running.
-- **Enforced config.json Auth:** The skill explicitly refuses to load credentials from legacy workspace `.env` files or environment variables to prevent accidental commits or exposure. Credentials must be provided via a dedicated `config.json` inside the `WORKSPACE_ROOT` with strict `0600` permissions.
+## Security Safeguards
 
-### 2. Output Path Sanitization
-The skill uses robust path sanitization (`_safe_output_path`) to prevent path traversal attacks. Exported data can only be written to the active workspace directory (automatically detected via `WORKSPACE_ROOT`) or a temporary directory (`/tmp/`).
+### File Permissions
+- **Strict umask (`0077`):** All files created by the skill are private by default.
+- **Explicit hardening:** Directories use `0700`, files use `0600`.
+- **Immediate application:** Permissions are set the moment files are created, not after.
 
-### Vulnerability Reporting
-If you discover a security issue that goes beyond these known and accepted architectural limitations, please open an issue in the skill's repository.
+### Path Restrictions
+- **Output sanitization:** The `_safe_output_path()` function prevents directory traversal attacks.
+- **Allowed locations:** Exported data can only be written to the workspace directory or `/tmp/`.
+
+### Token Lifecycle
+- **Short-lived:** Bearer tokens expire within minutes of inactivity.
+- **Cached locally:** Stored in `.pw-profile/token.json` with `0600` permissions.
+- **Cleared on logout:** The `logout` command deletes the entire `.pw-profile/` directory.
+
+### No External Transmission
+- **All network traffic goes to `*.raiffeisen.at`** — the official bank domain.
+- **No telemetry, analytics, or third-party services.**
+
+## Recommended Usage
+
+```
+login → [operations] → logout
+```
+
+Always run `logout` when finished. This ensures:
+- Browser cookies are deleted
+- Cached Bearer token is deleted
+- No valid session state remains on disk
+
+## Vulnerability Reporting
+
+If you discover a security issue beyond the known architectural limitations described above, please open an issue in the skill's GitHub repository.
