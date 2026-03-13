@@ -2,7 +2,7 @@
 name: raiffeisen-elba
 description: "Automate Raiffeisen ELBA online banking: login/logout, list accounts, and fetch transactions via Playwright."
 summary: "Raiffeisen ELBA banking automation: login, accounts, transactions."
-version: "1.4.3"
+version: "1.4.4"
 homepage: https://github.com/odrobnik/raiffeisen-elba-skill
 metadata:
   openclaw:
@@ -25,7 +25,7 @@ This skill performs browser automation and requires you to understand its data h
 
 2. **Mandatory 2FA Approval:** Every login requires you to manually approve a pushTAN request on your registered mobile device. Without this approval, the skill cannot access any bank data.
 
-3. **Ephemeral Bearer Token:** After successful 2FA approval, the skill extracts and caches the Bearer token from the browser session. This token enables chaining multiple operations (accounts → transactions → portfolio) without re-authenticating. The token is short-lived (expires within minutes) and is stored in a local cache file with `0600` permissions.
+3. **Ephemeral Bearer Token:** After successful 2FA approval, the skill extracts the Bearer token from browser storage (or by observing outgoing API requests within the same browser context). This token enables chaining multiple operations (accounts → transactions → portfolio) without re-authenticating. The token is short-lived (expires within minutes) and is stored in a local cache file with `0600` permissions.
 
 4. **Always Logout:** Run `logout` after completing your operations. This deletes the browser profile and cached token, ensuring no valid session state remains on disk.
 

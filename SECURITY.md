@@ -22,6 +22,15 @@ Raiffeisen ELBA does not provide a public API for personal finance automation. T
 
 This approach is necessary but inherently sensitive. The skill implements multiple safeguards to minimize risk.
 
+## How the Bearer Token is Extracted
+
+The skill uses two methods to obtain the Bearer token after successful 2FA login:
+
+1. **Primary:** Read from browser storage (`localStorage`/`sessionStorage`) using `page.evaluate()`.
+2. **Fallback:** If not found in storage, the skill uses Playwright's `page.route()` to observe outgoing API requests within the same browser context and capture the `Authorization: Bearer ...` header.
+
+This is **not** a man-in-the-middle attack — it's read-only observation of requests made by the browser the skill itself controls. No external proxy or network interception is involved. The captured token is cached locally (with `0600` permissions) to enable subsequent API calls without re-authenticating.
+
 ## Security Safeguards
 
 ### File Permissions
