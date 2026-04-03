@@ -1412,6 +1412,13 @@ def cmd_login(headless=True):
         page = context.new_page()
         try:
             if login(page, elba_id, pin, timeout_seconds=LOGIN_TIMEOUT):
+                # Extract and cache the bearer token so subsequent commands
+                # can reuse it without triggering another login.
+                token = _get_bearer_token(context, page)
+                if token:
+                    print(f"[login] Bearer token cached for subsequent commands.", file=sys.stderr)
+                else:
+                    print("[login] WARNING: Could not cache bearer token.", file=sys.stderr)
                 print("Session saved.", file=sys.stderr)
             else:
                 sys.exit(1)
