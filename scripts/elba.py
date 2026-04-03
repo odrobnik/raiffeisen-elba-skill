@@ -152,18 +152,32 @@ REGION_MAPPING = {
     "ELVIE37V": "Vorarlberg"
 }
 
-def load_credentials():
-    """Load credentials from config.json."""
+def _load_config() -> dict:
+    """Load the full config.json as a dict (or empty dict if missing)."""
     if CONFIG_FILE.exists():
         try:
-            cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-            elba_id = cfg.get("elba_id")
-            pin = cfg.get("pin")
-            if elba_id and pin:
-                return elba_id, pin
+            return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
         except Exception:
             pass
+    return {}
+
+
+def load_credentials():
+    """Load credentials from config.json."""
+    cfg = _load_config()
+    elba_id = cfg.get("elba_id")
+    pin = cfg.get("pin")
+    if elba_id and pin:
+        return elba_id, pin
     return None, None
+
+
+def get_institution_name() -> str:
+    """Return the institution name for canonical JSON output.
+
+    Uses the 'alias' key from config.json if set, otherwise defaults to 'elba'.
+    """
+    return _load_config().get("alias", "elba")
 
 
 
@@ -288,7 +302,7 @@ def canonicalize_accounts_elba(accounts: list[dict], raw_path: Path | None = Non
         out_accounts.append(acct)
 
     return {
-        'institution': 'elba',
+        'institution': get_institution_name(),
         'fetchedAt': _now_iso_local(),
         'rawPath': str(raw_path) if raw_path else None,
         'accounts': out_accounts,
@@ -1795,7 +1809,7 @@ def cmd_transactions(headless=True, account=None, date_from=None, date_to=None, 
             canonical = [_canonicalize_elba_transaction(tx) for tx in transactions if isinstance(tx, dict)]
 
             wrapper = {
-                "institution": "elba",
+                "institution": get_institution_name(),
                 "account": {"id": account, "iban": account if "AT" in account else None},
                 "range": {"from": date_from, "until": date_to},
                 "fetchedAt": _now_iso_local(),
@@ -1969,7 +1983,7 @@ def _canonicalize_elba_portfolio(payload: dict, *, depot_id: str, as_of_date: st
         )
 
     return {
-        "institution": "elba",
+        "institution": get_institution_name(),
         "account": {"id": depot_id, "iban": None},
         "asOf": as_of_date,
         "fetchedAt": _now_iso_local(),
@@ -2086,7 +2100,7 @@ def canonicalize_depot_transactions_elba(payload: dict, depot_id: str, date_from
             out.append(c)
 
     wrapper = {
-        "institution": "elba",
+        "institution": get_institution_name(),
         "account": {"id": str(depot_id)},
         "range": {"from": date_from, "until": date_to},
         "fetchedAt": _now_iso_local(),
