@@ -22,7 +22,7 @@ import requests
 try:
     from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 except ImportError:
-    print("ERROR: playwright not installed. Run: pip3 install playwright && playwright install chromium")
+    print("ERROR: playwright not installed. Run: pip3 install playwright && playwright install chromium", file=sys.stderr)
     sys.exit(1)
 
 # --- Configuration ---
@@ -312,20 +312,20 @@ def login(page, elba_id, pin, timeout_seconds: int | None = None):
     # Allow runtime override via global LOGIN_TIMEOUT
     if timeout_seconds is None:
         timeout_seconds = LOGIN_TIMEOUT
-    print(f"[login] Navigating to {URL_LOGIN}...")
+    print(f"[login] Navigating to {URL_LOGIN}...", file=sys.stderr)
     page.goto(URL_LOGIN)
     
     # Check for service unavailable
     time.sleep(1)
     page_content = page.content()
     if "Service Unavailable" in page_content or "503" in page.title():
-        print("[login] ERROR: Service Unavailable (503). ELBA may be temporarily down.")
-        print("[login] Please try again later.")
+        print("[login] ERROR: Service Unavailable (503). ELBA may be temporarily down.", file=sys.stderr)
+        print("[login] Please try again later.", file=sys.stderr)
         return False
     
     # Check for session expired page
     if page.locator('text="Session expired"').is_visible() or page.locator('text="Page Expired"').is_visible():
-        print("[login] Session expired, restarting...")
+        print("[login] Session expired, restarting...", file=sys.stderr)
         # Click Restart button if present
         if page.locator('button:has-text("Restart")').is_visible():
             page.locator('button:has-text("Restart")').click()
@@ -335,16 +335,16 @@ def login(page, elba_id, pin, timeout_seconds: int | None = None):
         # Check if we are already redirected to dashboard (session reuse)
         time.sleep(1)
         if "mein.elba.raiffeisen.at" in page.url:
-            print("[login] Already logged in!")
+            print("[login] Already logged in!", file=sys.stderr)
             return True
 
     # 1. Select Region
     region_name = get_region_name(elba_id)
     if not region_name:
-        print(f"[login] ERROR: Could not determine region for ID {elba_id}")
+        print(f"[login] ERROR: Could not determine region for ID {elba_id}", file=sys.stderr)
         return False
     
-    print(f"[login] Selecting region for {elba_id[:8]} -> looking for '{region_name}'...")
+    print(f"[login] Selecting region for {elba_id[:8]} -> looking for '{region_name}'...", file=sys.stderr)
     
     # Navigate dropdown option by option using arrow keys
     try:
@@ -368,7 +368,7 @@ def login(page, elba_id, pin, timeout_seconds: int | None = None):
                 for i in range(options.count()):
                     option_text = options.nth(i).inner_text()
                     if region_name.lower() in option_text.lower():
-                        print(f"[login] Found matching option: {option_text}")
+                        print(f"[login] Found matching option: {option_text}", file=sys.stderr)
                         options.nth(i).click()
                         time.sleep(0.5)
                         found = True
@@ -385,15 +385,15 @@ def login(page, elba_id, pin, timeout_seconds: int | None = None):
             time.sleep(0.2)
         
         if not found:
-            print(f"[login] ERROR: Could not find region '{region_name}' in dropdown")
+            print(f"[login] ERROR: Could not find region '{region_name}' in dropdown", file=sys.stderr)
             return False
         
     except Exception as e:
-        print(f"[login] Error selecting region: {e}")
+        print(f"[login] Error selecting region: {e}", file=sys.stderr)
         return False
 
     # 2. Fill Form
-    print("[login] Entering credentials...")
+    print("[login] Entering credentials...", file=sys.stderr)
     try:
         # Signatory number: input[formcontrolname="verfuegerNr"]
         page.locator('input[formcontrolname="verfuegerNr"]').fill(elba_id)
@@ -402,7 +402,7 @@ def login(page, elba_id, pin, timeout_seconds: int | None = None):
         page.locator('input[formcontrolname="pin"]').fill(pin)
         
         # Wait for Continue button to become enabled
-        print("[login] Waiting for Continue button to enable...")
+        print("[login] Waiting for Continue button to enable...", file=sys.stderr)
         submit_button = page.locator('button[type="submit"]:not([disabled])')
         submit_button.wait_for(timeout=10000, state="visible")
         time.sleep(1)  # Extra safety delay for validation
@@ -410,11 +410,11 @@ def login(page, elba_id, pin, timeout_seconds: int | None = None):
         # Submit: button[type="submit"]
         submit_button.click()
     except Exception as e:
-        print(f"[login] Error filling form: {e}")
+        print(f"[login] Error filling form: {e}", file=sys.stderr)
         return False
 
     # 3. Handle 2FA (pushTAN)
-    print("[login] Waiting for pushTAN screen...")
+    print("[login] Waiting for pushTAN screen...", file=sys.stderr)
     
     try:
         # Wait for the code element: p.rds-display-1
@@ -423,60 +423,60 @@ def login(page, elba_id, pin, timeout_seconds: int | None = None):
         code_locator.wait_for(timeout=10000)
         
         code = code_locator.inner_text().strip()
-        print("\n" + "="*40)
-        print(f"ELBA PUSHTAN CODE: {code}")
-        print("="*40 + "\n")
+        print("\n" + "="*40, file=sys.stderr)
+        print(f"ELBA PUSHTAN CODE: {code}", file=sys.stderr)
+        print("="*40 + "\n", file=sys.stderr)
         
         # Send to Telegram via stdout (Agent will see this)
         # Assuming the user is running this interactively or the agent is watching.
         
     except PlaywrightTimeout:
         # Maybe no 2FA needed or error?
-        print("[login] Did not see pushTAN code. Checking for errors...")
+        print("[login] Did not see pushTAN code. Checking for errors...", file=sys.stderr)
     
     # 4. Wait for success or error
-    print("[login] Waiting for navigation to dashboard...")
+    print("[login] Waiting for navigation to dashboard...", file=sys.stderr)
     start_time = time.time()
     while time.time() - start_time < max(int(timeout_seconds), 1):  # timeout for pushTAN approval
         # Check for service unavailable (skip if page is still navigating)
         try:
             page_content = page.content()
             if "Service Unavailable" in page_content or "503" in page.title():
-                print("[login] ERROR: Service Unavailable (503). ELBA may be temporarily down.")
+                print("[login] ERROR: Service Unavailable (503). ELBA may be temporarily down.", file=sys.stderr)
                 return False
         except Exception:
             # Page is still navigating, skip this check
             pass
         
         if "mein.elba.raiffeisen.at" in page.url:
-            print("[login] Login successful!")
+            print("[login] Login successful!", file=sys.stderr)
             
             # Navigate to the full dashboard to ensure all cookies are set
-            print("[login] Loading products dashboard to establish session...")
+            print("[login] Loading products dashboard to establish session...", file=sys.stderr)
             # domcontentloaded is usually enough; occasionally Playwright reports net::ERR_ABORTED
             # even though the SPA is usable. Treat that as a warning and continue.
             try:
                 page.goto(URL_DASHBOARD, wait_until="domcontentloaded", timeout=15000)
             except Exception as e:
-                print(f"[login] WARNING: Dashboard navigation error: {e}")
+                print(f"[login] WARNING: Dashboard navigation error: {e}", file=sys.stderr)
             time.sleep(3)
             
             # Verify we didn't get redirected back to login
             if "sso.raiffeisen.at" in page.url or "mein-login" in page.url:
-                print("[login] ERROR: Redirected back to login after initial success.")
+                print("[login] ERROR: Redirected back to login after initial success.", file=sys.stderr)
                 return False
             
             # Try to find at least one banking product card to confirm page loaded
             try:
                 page.locator('banking-product-card').first.wait_for(timeout=5000, state="visible")
-                print("[login] Dashboard loaded successfully!")
+                print("[login] Dashboard loaded successfully!", file=sys.stderr)
             except PlaywrightTimeout:
-                print("[login] WARNING: Dashboard loaded but no product cards visible yet.")
+                print("[login] WARNING: Dashboard loaded but no product cards visible yet.", file=sys.stderr)
             
             # Save the current URL for later use
             SESSION_URL_FILE.parent.mkdir(parents=True, exist_ok=True)
             SESSION_URL_FILE.write_text(page.url, encoding='utf-8')
-            print(f"[login] Saved session URL: {page.url}")
+            print(f"[login] Saved session URL: {page.url}", file=sys.stderr)
             
             # Give browser extra time to persist everything
             time.sleep(2)
@@ -485,23 +485,23 @@ def login(page, elba_id, pin, timeout_seconds: int | None = None):
         
         # Check for session expired
         if page.locator('text="Session expired"').is_visible() or page.locator('text="Page Expired"').is_visible():
-            print("[login] ERROR: Session expired during login.")
+            print("[login] ERROR: Session expired during login.", file=sys.stderr)
             return False
         
         # Check for invalid signature error
         if page.locator('text="Invalid signature data"').is_visible():
-            print("[login] ERROR: Invalid signature data were entered. Please try again.")
+            print("[login] ERROR: Invalid signature data were entered. Please try again.", file=sys.stderr)
             return False
         
         # Check errors
         if page.locator('div#error_message').is_visible():
             err = page.locator('div#error_message').inner_text()
-            print(f"[login] ERROR: {err}")
+            print(f"[login] ERROR: {err}", file=sys.stderr)
             return False
             
         time.sleep(1)
         
-    print("[login] Timeout waiting for approval.")
+    print("[login] Timeout waiting for approval.", file=sys.stderr)
     return False
 
 
@@ -509,7 +509,7 @@ def fetch_accounts(page):
     """Fetch accounts from the dashboard carousel (assumes already on dashboard)."""
     # Ensure we're on the products dashboard
     if "meine-produkte/dashboard" not in page.url:
-        print(f"[accounts] Navigating to products dashboard...")
+        print(f"[accounts] Navigating to products dashboard...", file=sys.stderr)
         try:
             # networkidle is brittle for SPA apps; use domcontentloaded with a timeout.
             page.goto(URL_DASHBOARD, wait_until="domcontentloaded", timeout=15000)
@@ -517,39 +517,39 @@ def fetch_accounts(page):
         except Exception as e:
             error_msg = str(e)
             if "ERR_CONNECTION_RESET" in error_msg or "connection was reset" in error_msg.lower():
-                print("[accounts] ERROR: Connection reset. ELBA server connection failed.")
-                print("[accounts] Please try again later.")
+                print("[accounts] ERROR: Connection reset. ELBA server connection failed.", file=sys.stderr)
+                print("[accounts] Please try again later.", file=sys.stderr)
                 return []
             else:
-                print(f"[accounts] ERROR: Navigation failed: {e}")
+                print(f"[accounts] ERROR: Navigation failed: {e}", file=sys.stderr)
                 return []
     
     # Check for connection errors on the page
     page_content = page.content()
     if "ERR_CONNECTION_RESET" in page_content or "connection was reset" in page_content.lower():
-        print("[accounts] ERROR: Connection reset. ELBA server connection failed.")
-        print("[accounts] Please try again later.")
+        print("[accounts] ERROR: Connection reset. ELBA server connection failed.", file=sys.stderr)
+        print("[accounts] Please try again later.", file=sys.stderr)
         return []
     
     # Check for session expired or login page
     if "sso.raiffeisen.at" in page.url or "mein-login" in page.url:
-        print("[accounts] ERROR: Redirected to login page. Session expired.")
+        print("[accounts] ERROR: Redirected to login page. Session expired.", file=sys.stderr)
         return []
     
-    print(f"[accounts] Current URL: {page.url}")
+    print(f"[accounts] Current URL: {page.url}", file=sys.stderr)
     
     # Wait for banking product cards to load
     try:
-        print("[accounts] Waiting for banking-product-card elements...")
+        print("[accounts] Waiting for banking-product-card elements...", file=sys.stderr)
         page.locator('banking-product-card').first.wait_for(timeout=15000, state="visible")
-        print("[accounts] Found banking product cards!")
+        print("[accounts] Found banking product cards!", file=sys.stderr)
     except PlaywrightTimeout:
-        print(f"[accounts] ERROR: Could not find banking product cards after timeout.")
-        print(f"[accounts] Page title: {page.title()}")
+        print(f"[accounts] ERROR: Could not find banking product cards after timeout.", file=sys.stderr)
+        print(f"[accounts] Page title: {page.title()}", file=sys.stderr)
         # Try to find what IS on the page
         try:
             body_text = page.locator('body').inner_text()[:500]
-            print(f"[accounts] Page content preview: {body_text}")
+            print(f"[accounts] Page content preview: {body_text}", file=sys.stderr)
         except:
             pass
         return []
@@ -562,7 +562,7 @@ def fetch_accounts(page):
     max_pages = 20  # Safety limit
     
     while carousel_page <= max_pages:
-        print(f"[accounts] Processing carousel page {carousel_page}...")
+        print(f"[accounts] Processing carousel page {carousel_page}...", file=sys.stderr)
         
         # Wait a moment for carousel to settle
         time.sleep(1)
@@ -582,13 +582,13 @@ def fetch_accounts(page):
             except:
                 pass
         
-        print(f"[accounts] Found {len(visible_cards)} visible card(s) (out of {len(all_cards)} total in DOM)")
+        print(f"[accounts] Found {len(visible_cards)} visible card(s) (out of {len(all_cards)} total in DOM)", file=sys.stderr)
         
         cards_processed_this_page = 0
         
         # Process all visible cards
         for i, card in enumerate(visible_cards):
-            print(f"[accounts] Processing card {i}...")
+            print(f"[accounts] Processing card {i}...", file=sys.stderr)
             
             # Try quick IBAN extraction for duplicate check
             quick_iban = None
@@ -605,29 +605,29 @@ def fetch_accounts(page):
                 quick_iban = ' '.join(footer_text.split()).strip()
                 
                 if not quick_iban:
-                    print(f"[accounts] Card {i}: Empty IBAN after cleaning")
+                    print(f"[accounts] Card {i}: Empty IBAN after cleaning", file=sys.stderr)
                 else:
-                    print(f"[accounts] Card {i}: Extracted IBAN: '{quick_iban}'")
+                    print(f"[accounts] Card {i}: Extracted IBAN: '{quick_iban}'", file=sys.stderr)
                     
                     if quick_iban in seen_ibans:
-                        print(f"[accounts] Card {i}: Already processed")
+                        print(f"[accounts] Card {i}: Already processed", file=sys.stderr)
                         continue  # Skip - already processed
             except Exception as e:
-                print(f"[accounts] Card {i}: Could not quick-extract IBAN: {e}")
+                print(f"[accounts] Card {i}: Could not quick-extract IBAN: {e}", file=sys.stderr)
                 # Continue processing - we'll get IBAN in the full extraction below
             
             try:
                 # Extract account type from rds-card-subtitle
                 account_type = card.locator('rds-card-subtitle').inner_text(timeout=5000).strip()
             except Exception as e:
-                print(f"[accounts] Card {i}: Could not extract type: {e}")
+                print(f"[accounts] Card {i}: Could not extract type: {e}", file=sys.stderr)
                 account_type = "Unknown"
             
             try:
                 # Extract account name from rds-card-title
                 name = card.locator('rds-card-title').inner_text(timeout=5000).strip()
             except Exception as e:
-                print(f"[accounts] Card {i}: Could not extract name: {e}")
+                print(f"[accounts] Card {i}: Could not extract name: {e}", file=sys.stderr)
                 name = "Unknown"
             
             try:
@@ -646,7 +646,7 @@ def fetch_accounts(page):
                         balance_elem = card.locator('rds-card-content strong').first
                         balance_text = balance_elem.inner_text(timeout=2000).strip()
             except Exception as e:
-                print(f"[accounts] Card {i}: Could not extract balance: {e}")
+                print(f"[accounts] Card {i}: Could not extract balance: {e}", file=sys.stderr)
                 # For Depot with no balance, default to 0
                 if account_type == "Depot":
                     balance_text = "0,00 EUR"
@@ -682,12 +682,12 @@ def fetch_accounts(page):
                     if not iban:
                         iban = "Unknown"
                 except Exception as e:
-                    print(f"[accounts] Card {i}: Could not extract IBAN: {e}")
+                    print(f"[accounts] Card {i}: Could not extract IBAN: {e}", file=sys.stderr)
                     iban = "Unknown"
             
             # Skip if we couldn't extract valid data
             if not iban or iban == "Unknown" or account_type == "Unknown":
-                print(f"[accounts] Card {i}: Skipping - incomplete data (iban={iban}, type={account_type})")
+                print(f"[accounts] Card {i}: Skipping - incomplete data (iban={iban}, type={account_type})", file=sys.stderr)
                 continue
             
             # Add to seen set and increment counter
@@ -732,17 +732,17 @@ def fetch_accounts(page):
                     "profit_loss": profit_loss
                 })
             
-            print(f"[accounts] Card {i}: {account_type} - {name}")
+            print(f"[accounts] Card {i}: {account_type} - {name}", file=sys.stderr)
         
-        print(f"[accounts] Processed {cards_processed_this_page} new account(s) on this page")
+        print(f"[accounts] Processed {cards_processed_this_page} new account(s) on this page", file=sys.stderr)
         
         # If we didn't process any new cards for 2 consecutive pages, we're done
         if cards_processed_this_page == 0 and carousel_page > 2:
-            print("[accounts] No new accounts found, stopping.")
+            print("[accounts] No new accounts found, stopping.", file=sys.stderr)
             break
         
         # Check for right arrow to navigate to next carousel page
-        print("[accounts] Checking for right arrow...")
+        print("[accounts] Checking for right arrow...", file=sys.stderr)
         try:
             right_arrow = page.locator('rds-directional-arrow button.right').first
             
@@ -750,27 +750,27 @@ def fetch_accounts(page):
             if right_arrow.count() > 0:
                 is_visible = right_arrow.is_visible()
                 is_disabled = right_arrow.is_disabled()
-                print(f"[accounts] Right arrow found: visible={is_visible}, disabled={is_disabled}")
+                print(f"[accounts] Right arrow found: visible={is_visible}, disabled={is_disabled}", file=sys.stderr)
                 
                 if is_visible and not is_disabled:
-                    print("[accounts] Clicking right arrow to next page...")
+                    print("[accounts] Clicking right arrow to next page...", file=sys.stderr)
                     right_arrow.click()
                     time.sleep(2)  # Wait for carousel animation
                     carousel_page += 1
                 else:
-                    print("[accounts] Right arrow disabled or not visible - reached end.")
+                    print("[accounts] Right arrow disabled or not visible - reached end.", file=sys.stderr)
                     break
             else:
-                print("[accounts] No right arrow found - single page carousel.")
+                print("[accounts] No right arrow found - single page carousel.", file=sys.stderr)
                 break
         except Exception as e:
-            print(f"[accounts] Error checking right arrow: {e}")
+            print(f"[accounts] Error checking right arrow: {e}", file=sys.stderr)
             break
     
     if carousel_page > max_pages:
-        print(f"[accounts] WARNING: Reached max carousel pages ({max_pages}), stopping.")
+        print(f"[accounts] WARNING: Reached max carousel pages ({max_pages}), stopping.", file=sys.stderr)
     
-    print(f"[accounts] Total unique accounts found: {len(accounts)}")
+    print(f"[accounts] Total unique accounts found: {len(accounts)}", file=sys.stderr)
     return accounts
 
 def _extract_bearer_token(page):
@@ -817,7 +817,7 @@ def _extract_bearer_token(page):
     }""")
     
     if token:
-        print(f"[token] Found token in storage: {token[:20]}...", flush=True)
+        print(f"[token] Found token in storage: {token[:20]}...", flush=True, file=sys.stderr)
     return token
 
 def _load_cached_token():
@@ -887,15 +887,15 @@ def _extract_bearer_token_from_storage_state(context):
 
 def _get_bearer_token(context, page):
     """Extract bearer token from storage/cache or capture from API requests."""
-    print("[token] Extracting bearer token...", flush=True)
+    print("[token] Extracting bearer token...", flush=True, file=sys.stderr)
     cached = _load_cached_token()
     if cached:
-        print("[token] Using cached token...", flush=True)
+        print("[token] Using cached token...", flush=True, file=sys.stderr)
         return cached
     
     token = _extract_bearer_token_from_storage_state(context)
     if token:
-        print(f"[token] Found token in storage state: {token[:20]}...", flush=True)
+        print(f"[token] Found token in storage state: {token[:20]}...", flush=True, file=sys.stderr)
         _save_cached_token(token)
         return token
     
@@ -904,14 +904,14 @@ def _get_bearer_token(context, page):
         _save_cached_token(token)
         return token
     
-    print("[token] Token not found in storage, capturing from API requests...", flush=True)
+    print("[token] Token not found in storage, capturing from API requests...", flush=True, file=sys.stderr)
     captured_token = {'value': None}
     
     def handle_request(route, request):
         auth_header = request.headers.get('authorization', '')
         if auth_header.startswith('Bearer '):
             captured_token['value'] = auth_header[7:]
-            print(f"[token] Captured: {captured_token['value'][:20]}...", flush=True)
+            print(f"[token] Captured: {captured_token['value'][:20]}...", flush=True, file=sys.stderr)
         route.continue_()
     
     # Hard time-limit the capture phase so we never hang here.
@@ -1112,20 +1112,20 @@ def fetch_accounts_api(token, cookies):
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3 Safari/605.1.15",
     }
 
-    print("[api] Fetching products...", flush=True)
+    print("[api] Fetching products...", flush=True, file=sys.stderr)
 
     try:
         response = requests.get(url, headers=headers, cookies=cookies)
         if response.status_code == 200:
             products = response.json()
-            print(f"[api] Found {len(products)} products", flush=True)
+            print(f"[api] Found {len(products)} products", flush=True, file=sys.stderr)
             raw_path = _write_debug_json("products-raw", products)
             return ([_product_to_account(p) for p in products], raw_path)
 
-        print(f"[api] Request failed with status {response.status_code}: {response.text}", flush=True)
+        print(f"[api] Request failed with status {response.status_code}: {response.text}", flush=True, file=sys.stderr)
         return (None, None)
     except Exception as e:
-        print(f"[api] Error: {e}", flush=True)
+        print(f"[api] Error: {e}", flush=True, file=sys.stderr)
         return (None, None)
 
 
@@ -1172,44 +1172,44 @@ def fetch_depot_transactions_api(token, cookies, bankleitzahl: str, depotnummer:
 
 def fetch_documents(page, output_dir=None, date_from=None, date_to=None):
     """Fetch and download documents from mailbox."""
-    print("[documents] Navigating to documents page...")
+    print("[documents] Navigating to documents page...", file=sys.stderr)
     try:
         page.goto(URL_DOCUMENTS, wait_until="networkidle")
         time.sleep(3)
     except Exception as e:
         error_msg = str(e)
         if "ERR_CONNECTION_RESET" in error_msg or "connection was reset" in error_msg.lower():
-            print("[documents] ERROR: Connection reset. ELBA server connection failed.")
+            print("[documents] ERROR: Connection reset. ELBA server connection failed.", file=sys.stderr)
             return []
         else:
-            print(f"[documents] ERROR: Navigation failed: {e}")
+            print(f"[documents] ERROR: Navigation failed: {e}", file=sys.stderr)
             return []
     
     # Apply date filter if provided
     if date_from or date_to:
-        print(f"[documents] Applying date filter: {date_from or 'any'} to {date_to or 'any'}", flush=True)
+        print(f"[documents] Applying date filter: {date_from or 'any'} to {date_to or 'any'}", flush=True, file=sys.stderr)
         try:
             if date_from:
                 from_input = page.locator('input[formcontrolname="fromDate"]')
                 from_input.fill(date_from)
-                print(f"[documents] Filled 'from' date: {date_from}, pressing Tab...", flush=True)
+                print(f"[documents] Filled 'from' date: {date_from}, pressing Tab...", flush=True, file=sys.stderr)
                 page.keyboard.press("Tab")
-                print("[documents] Waiting for page to reload after 'from' date...", flush=True)
+                print("[documents] Waiting for page to reload after 'from' date...", flush=True, file=sys.stderr)
                 time.sleep(3)
             
             if date_to:
                 to_input = page.locator('input[formcontrolname="toDate"]')
                 to_input.fill(date_to)
-                print(f"[documents] Filled 'to' date: {date_to}, pressing Tab...", flush=True)
+                print(f"[documents] Filled 'to' date: {date_to}, pressing Tab...", flush=True, file=sys.stderr)
                 page.keyboard.press("Tab")
-                print("[documents] Waiting for page to reload after 'to' date...", flush=True)
+                print("[documents] Waiting for page to reload after 'to' date...", flush=True, file=sys.stderr)
                 time.sleep(3)
             
             # Wait for results to fully load
-            print("[documents] Waiting for filtered results to load...", flush=True)
+            print("[documents] Waiting for filtered results to load...", flush=True, file=sys.stderr)
             time.sleep(3)
         except Exception as e:
-            print(f"[documents] Warning: Could not apply date filter: {e}", flush=True)
+            print(f"[documents] Warning: Could not apply date filter: {e}", flush=True, file=sys.stderr)
     
     # Set up download directory
     if not output_dir:
@@ -1218,7 +1218,7 @@ def fetch_documents(page, output_dir=None, date_from=None, date_to=None):
         output_dir = Path(output_dir)
     
     output_dir.mkdir(parents=True, exist_ok=True)
-    print(f"[documents] Saving to: {output_dir}")
+    print(f"[documents] Saving to: {output_dir}", file=sys.stderr)
     
     # Configure browser downloads
     # Note: Playwright handles downloads via download events
@@ -1228,8 +1228,8 @@ def fetch_documents(page, output_dir=None, date_from=None, date_to=None):
     processed_docs = set()  # Track document names we've already processed
     
     # Download documents while scrolling (virtual scroller removes items from DOM as you scroll)
-    print("[documents] Starting download with infinite scroll...")
-    print("[documents] Downloading documents as they appear (virtual scroller)", flush=True)
+    print("[documents] Starting download with infinite scroll...", file=sys.stderr)
+    print("[documents] Downloading documents as they appear (virtual scroller)", flush=True, file=sys.stderr)
     time.sleep(3)
     
     no_new_downloads_count = 0
@@ -1275,12 +1275,12 @@ def fetch_documents(page, output_dir=None, date_from=None, date_to=None):
                 processed_docs.add(row_id)
                 total_processed += 1
                 
-                print(f"\n[documents] Processing {total_processed}: {doc_name}", flush=True)
+                print(f"\n[documents] Processing {total_processed}: {doc_name}", flush=True, file=sys.stderr)
                 
                 # Try to download
                 try:
                     
-                    print(f"[documents]   → Initiating download...", flush=True)
+                    print(f"[documents]   → Initiating download...", flush=True, file=sys.stderr)
                     with page.expect_download(timeout=30000) as download_info:
                         download_btn.click()
                         time.sleep(0.5)
@@ -1316,49 +1316,49 @@ def fetch_documents(page, output_dir=None, date_from=None, date_to=None):
                     successful_downloads += 1
                     downloads_this_batch += 1
                     
-                    print(f"[documents]   ✓ Downloaded {successful_downloads}: {filename}", flush=True)
-                    print(f"[documents]   ✓ Saved to: {filepath}", flush=True)
+                    print(f"[documents]   ✓ Downloaded {successful_downloads}: {filename}", flush=True, file=sys.stderr)
+                    print(f"[documents]   ✓ Saved to: {filepath}", flush=True, file=sys.stderr)
                     
                     time.sleep(1)  # Rate limit
                     
                 except Exception as e:
-                    print(f"[documents]   ✗ Error downloading: {e}", flush=True)
+                    print(f"[documents]   ✗ Error downloading: {e}", flush=True, file=sys.stderr)
             except Exception as e:
-                print(f"[documents] Error processing row: {e}", flush=True)
+                print(f"[documents] Error processing row: {e}", flush=True, file=sys.stderr)
                 continue
         
         # Scroll to load more
         if downloads_this_batch > 0:
             no_new_downloads_count = 0
-            print(f"[documents] Downloaded {downloads_this_batch} new document(s) this batch, scrolling for more...", flush=True)
+            print(f"[documents] Downloaded {downloads_this_batch} new document(s) this batch, scrolling for more...", flush=True, file=sys.stderr)
         else:
             no_new_downloads_count += 1
-            print(f"[documents] No new documents this batch ({no_new_downloads_count}/{max_no_change_attempts}), scrolling...", flush=True)
+            print(f"[documents] No new documents this batch ({no_new_downloads_count}/{max_no_change_attempts}), scrolling...", flush=True, file=sys.stderr)
         
         # Scroll more aggressively to trigger lazy loading
         scroller.evaluate("el => el.scrollBy(0, 2000)")
         time.sleep(5)  # Longer wait to ensure lazy load completes
     
-    print(f"\n[documents] Downloaded {successful_downloads} document(s) to {output_dir}", flush=True)
+    print(f"\n[documents] Downloaded {successful_downloads} document(s) to {output_dir}", flush=True, file=sys.stderr)
     return documents
 
 
 def cmd_setup():
     """Interactive setup wizard."""
-    print("Raiffeisen ELBA Setup")
-    print("---------------------")
+    print("Raiffeisen ELBA Setup", file=sys.stderr)
+    print("---------------------", file=sys.stderr)
 
     # Ensure directories
     if not CONFIG_DIR.exists():
         CONFIG_DIR.mkdir(parents=True)
         _harden_path(CONFIG_DIR)
-        print(f"Created {CONFIG_DIR}")
+        print(f"Created {CONFIG_DIR}", file=sys.stderr)
 
     elba_id = input("Enter ELBA-Verfügernummer (e.g., ELVIE32V...): ").strip()
     pin = input("Enter PIN (5 digits): ").strip()
 
     if not elba_id or not pin:
-        print("Error: ID and PIN are required.")
+        print("Error: ID and PIN are required.", file=sys.stderr)
         return
 
     # Write to config.json
@@ -1366,21 +1366,21 @@ def cmd_setup():
     CONFIG_FILE.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
     _harden_path(CONFIG_FILE)
 
-    print(f"Credentials saved to {CONFIG_FILE}")
+    print(f"Credentials saved to {CONFIG_FILE}", file=sys.stderr)
 
     # Verify Playwright
-    print("Verifying Playwright installation...")
+    print("Verifying Playwright installation...", file=sys.stderr)
     try:
         import playwright
         subprocess.run(["playwright", "install", "chromium"], check=False)
     except (ImportError, FileNotFoundError):
-        print("Please install playwright: pip3 install playwright")
+        print("Please install playwright: pip3 install playwright", file=sys.stderr)
 
 def cmd_login(headless=True):
     """Run the login flow."""
     elba_id, pin = load_credentials()
     if not elba_id or not pin:
-        print("Credentials not found. Run 'setup' first.")
+        print("Credentials not found. Run 'setup' first.", file=sys.stderr)
         sys.exit(1)
         
     with sync_playwright() as p:
@@ -1398,7 +1398,7 @@ def cmd_login(headless=True):
         page = context.new_page()
         try:
             if login(page, elba_id, pin, timeout_seconds=LOGIN_TIMEOUT):
-                print("Session saved.")
+                print("Session saved.", file=sys.stderr)
             else:
                 sys.exit(1)
         finally:
@@ -1409,16 +1409,16 @@ def cmd_logout():
     if PROFILE_DIR.exists():
         import shutil
         shutil.rmtree(PROFILE_DIR)
-        print("Session cleared.")
+        print("Session cleared.", file=sys.stderr)
     else:
-        print("No session found.")
+        print("No session found.", file=sys.stderr)
 
 
 def cmd_accounts(headless=True, json_output=False):
     """List all accounts (logs in automatically if needed)."""
     elba_id, pin = load_credentials()
     if not elba_id or not pin:
-        print("Credentials not found. Run 'setup' first.")
+        print("Credentials not found. Run 'setup' first.", file=sys.stderr)
         sys.exit(1)
     
     # Ensure profile dir exists
@@ -1438,15 +1438,15 @@ def cmd_accounts(headless=True, json_output=False):
         
         try:
             # Try to use existing session first (no forced login)
-            print("[accounts] Attempting to access dashboard (reuse session)...")
+            print("[accounts] Attempting to access dashboard (reuse session)...", file=sys.stderr)
             try:
                 page.goto(URL_DASHBOARD, wait_until="domcontentloaded")
                 time.sleep(2)
             except Exception as e:
                 error_msg = str(e)
                 if "ERR_CONNECTION_RESET" in error_msg or "connection was reset" in error_msg.lower():
-                    print("[accounts] ERROR: Connection reset. ELBA server connection failed.")
-                    print("[accounts] Please try again later.")
+                    print("[accounts] ERROR: Connection reset. ELBA server connection failed.", file=sys.stderr)
+                    print("[accounts] Please try again later.", file=sys.stderr)
                     sys.exit(1)
                 else:
                     raise
@@ -1454,8 +1454,8 @@ def cmd_accounts(headless=True, json_output=False):
             # Check for connection errors on the page
             page_content = page.content()
             if "ERR_CONNECTION_RESET" in page_content or "connection was reset" in page_content.lower():
-                print("[accounts] ERROR: Connection reset. ELBA server connection failed.")
-                print("[accounts] Please try again later.")
+                print("[accounts] ERROR: Connection reset. ELBA server connection failed.", file=sys.stderr)
+                print("[accounts] Please try again later.", file=sys.stderr)
                 sys.exit(1)
             
             # Prefer API for accounts (reuse token from prior login)
@@ -1475,9 +1475,9 @@ def cmd_accounts(headless=True, json_output=False):
 
             # If API failed, then login and retry once
             if accounts is None:
-                print("[accounts] API request failed or no token; performing login...")
+                print("[accounts] API request failed or no token; performing login...", file=sys.stderr)
                 if not login(page, elba_id, pin, timeout_seconds=LOGIN_TIMEOUT):
-                    print("[accounts] Login failed.")
+                    print("[accounts] Login failed.", file=sys.stderr)
                     sys.exit(1)
 
                 # After login, force token re-extraction (cached token might be stale).
@@ -1488,7 +1488,7 @@ def cmd_accounts(headless=True, json_output=False):
                     accounts, raw_path = fetch_accounts_api(token, cookies)
 
             if accounts is None:
-                print("[accounts] WARNING: API unavailable, falling back to scraping.")
+                print("[accounts] WARNING: API unavailable, falling back to scraping.", file=sys.stderr)
                 accounts = fetch_accounts(page)
 
             wrapper = canonicalize_accounts_elba(accounts or [], raw_path=raw_path)
@@ -1496,7 +1496,7 @@ def cmd_accounts(headless=True, json_output=False):
             if json_output:
                 print(json.dumps(wrapper, ensure_ascii=False, indent=2))
             else:
-                print(f"[accounts] {len(wrapper['accounts'])} account(s):")
+                print(f"[accounts] {len(wrapper['accounts'])} account(s):", file=sys.stderr)
                 for acc in wrapper["accounts"]:
                     name = acc.get("name") or "N/A"
                     iban = acc.get("iban")
@@ -1518,7 +1518,7 @@ def cmd_accounts(headless=True, json_output=False):
                         pl_s = ""
                         if isinstance(pl, dict) and pl.get("amount") is not None:
                             pl_s = f" (P/L {_eu_amount(float(pl['amount']))} {cur}" + (f" / {float(pl.get('percent'))*100:.1f}%" if pl.get("percent") is not None else "") + ")"
-                        print(f"- {name} — {iban_short} — value {v_s}{pl_s} — {typ}")
+                        print(f"- {name} — {iban_short} — value {v_s}{pl_s} — {typ}", file=sys.stderr)
                         continue
 
                     booked_s = "N/A"
@@ -1529,12 +1529,12 @@ def cmd_accounts(headless=True, json_output=False):
                         avail_s = f"{_eu_amount(float(available['amount']))} {cur}"
 
                     if avail_s and avail_s != booked_s:
-                        print(f"- {name} — {iban_short} — {booked_s} (avail {avail_s}) — {typ}")
+                        print(f"- {name} — {iban_short} — {booked_s} (avail {avail_s}) — {typ}", file=sys.stderr)
                     else:
-                        print(f"- {name} — {iban_short} — {booked_s} — {typ}")
+                        print(f"- {name} — {iban_short} — {booked_s} — {typ}", file=sys.stderr)
 
                 if wrapper.get("rawPath"):
-                    print(f"[accounts] raw payload saved: {wrapper['rawPath']}")
+                    print(f"[accounts] raw payload saved: {wrapper['rawPath']}", file=sys.stderr)
             
         finally:
             context.close()
@@ -1542,12 +1542,12 @@ def cmd_accounts(headless=True, json_output=False):
 
 def cmd_download(headless=True, output_dir=None, date_from=None, date_to=None, json_output=False):
     """Download documents from mailbox (logs in automatically if needed)."""
-    print("[INIT] Starting ELBA document download...", flush=True)
+    print("[INIT] Starting ELBA document download...", flush=True, file=sys.stderr)
     elba_id, pin = load_credentials()
     if not elba_id or not pin:
-        print("Credentials not found. Run 'setup' first.", flush=True)
+        print("Credentials not found. Run 'setup' first.", flush=True, file=sys.stderr)
         sys.exit(1)
-    print(f"[INIT] Loaded credentials for {elba_id[:8]}...", flush=True)
+    print(f"[INIT] Loaded credentials for {elba_id[:8]}...", flush=True, file=sys.stderr)
     
     # Ensure profile dir exists
     if not PROFILE_DIR.exists():
@@ -1567,31 +1567,31 @@ def cmd_download(headless=True, output_dir=None, date_from=None, date_to=None, j
         
         try:
             # Try to navigate to documents first
-            print("[download] Attempting to access documents page...")
+            print("[download] Attempting to access documents page...", file=sys.stderr)
             try:
                 page.goto(URL_DOCUMENTS, wait_until="networkidle")
                 time.sleep(2)
             except Exception as e:
                 error_msg = str(e)
                 if "ERR_CONNECTION_RESET" in error_msg or "connection was reset" in error_msg.lower():
-                    print("[download] ERROR: Connection reset. ELBA server connection failed.")
-                    print("[download] Please try again later.")
+                    print("[download] ERROR: Connection reset. ELBA server connection failed.", file=sys.stderr)
+                    print("[download] Please try again later.", file=sys.stderr)
                     sys.exit(1)
                 else:
                     raise
             
             # Check if we got redirected to login
             if "sso.raiffeisen.at" in page.url or "mein-login" in page.url:
-                print("[download] Not logged in, performing login...")
+                print("[download] Not logged in, performing login...", file=sys.stderr)
                 if not login(page, elba_id, pin, timeout_seconds=LOGIN_TIMEOUT):
-                    print("[download] Login failed.")
+                    print("[download] Login failed.", file=sys.stderr)
                     sys.exit(1)
                 # After successful login, navigate to documents
-                print("[download] Login successful, navigating to documents...")
+                print("[download] Login successful, navigating to documents...", file=sys.stderr)
                 page.goto(URL_DOCUMENTS, wait_until="networkidle")
                 time.sleep(2)
             else:
-                print("[download] Already logged in!")
+                print("[download] Already logged in!", file=sys.stderr)
             
             # Now fetch and download documents
             documents = fetch_documents(page, output_dir, date_from, date_to)
@@ -1600,7 +1600,7 @@ def cmd_download(headless=True, output_dir=None, date_from=None, date_to=None, j
                 import json
                 print(json.dumps(documents, ensure_ascii=False, indent=2))
             elif not documents:
-                print("No documents downloaded.")
+                print("No documents downloaded.", file=sys.stderr)
             
         finally:
             context.close()
@@ -1699,7 +1699,7 @@ def _canonicalize_elba_transaction(tx: dict) -> dict:
 def cmd_transactions(headless=True, account=None, date_from=None, date_to=None, output=None, fmt="json"):
     """Download transactions for an account (logs in automatically if needed)."""
     if not account or not date_from or not date_to:
-        print("Missing required arguments: --account, --from, --until")
+        print("Missing required arguments: --account, --from, --until", file=sys.stderr)
         sys.exit(1)
 
     # ISO date validation
@@ -1707,12 +1707,12 @@ def cmd_transactions(headless=True, account=None, date_from=None, date_to=None, 
         datetime.strptime(date_from, "%Y-%m-%d")
         datetime.strptime(date_to, "%Y-%m-%d")
     except ValueError:
-        print("ERROR: Dates must be in YYYY-MM-DD format.")
+        print("ERROR: Dates must be in YYYY-MM-DD format.", file=sys.stderr)
         sys.exit(1)
 
     elba_id, pin = load_credentials()
     if not elba_id or not pin:
-        print("Credentials not found. Run 'setup' first.")
+        print("Credentials not found. Run 'setup' first.", file=sys.stderr)
         sys.exit(1)
 
     if not PROFILE_DIR.exists():
@@ -1730,20 +1730,20 @@ def cmd_transactions(headless=True, account=None, date_from=None, date_to=None, 
 
         page = context.new_page()
         try:
-            print("[transactions] Attempting to access documents (reuse session)...")
+            print("[transactions] Attempting to access documents (reuse session)...", file=sys.stderr)
             page.goto(URL_DOCUMENTS, wait_until="domcontentloaded")
             time.sleep(2)
 
             token = _get_bearer_token(context, page)
             if not token:
-                print("[transactions] Token not found, performing login...")
+                print("[transactions] Token not found, performing login...", file=sys.stderr)
                 if not login(page, elba_id, pin, timeout_seconds=LOGIN_TIMEOUT):
-                    print("[transactions] Login failed.")
+                    print("[transactions] Login failed.", file=sys.stderr)
                     sys.exit(1)
                 token = _get_bearer_token(context, page)
 
             if not token:
-                print("[transactions] ERROR: Could not extract bearer token")
+                print("[transactions] ERROR: Could not extract bearer token", file=sys.stderr)
                 sys.exit(1)
 
             cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
@@ -1751,26 +1751,26 @@ def cmd_transactions(headless=True, account=None, date_from=None, date_to=None, 
             transactions, status_code = fetch_transactions_all(token, cookies, account, date_from, date_to)
 
             if transactions is None and status_code == 401:
-                print("[transactions] Token rejected (401). Clearing cache and re-authenticating...", flush=True)
+                print("[transactions] Token rejected (401). Clearing cache and re-authenticating...", flush=True, file=sys.stderr)
                 _clear_cached_token()
                 if not login(page, elba_id, pin, timeout_seconds=LOGIN_TIMEOUT):
-                    print("[transactions] Login failed.")
+                    print("[transactions] Login failed.", file=sys.stderr)
                     sys.exit(1)
                 token = _get_bearer_token(context, page)
                 if not token:
-                    print("[transactions] ERROR: Could not extract bearer token")
+                    print("[transactions] ERROR: Could not extract bearer token", file=sys.stderr)
                     sys.exit(1)
                 cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
                 transactions, status_code = fetch_transactions_all(token, cookies, account, date_from, date_to)
 
             if transactions is None:
-                print("[transactions] Failed to fetch transactions")
+                print("[transactions] Failed to fetch transactions", file=sys.stderr)
                 sys.exit(1)
 
             raw_path = None
             if DEBUG_ENABLED:
                 raw_path = _write_debug_json("transactions-raw", transactions)
-                print(f"[debug] Raw transactions saved to: {raw_path}")
+                print(f"[debug] Raw transactions saved to: {raw_path}", file=sys.stderr)
 
             # Resolve output base (even if there are 0 transactions)
             acc_clean = _safe_filename_component(account, default="account")
@@ -1790,7 +1790,7 @@ def cmd_transactions(headless=True, account=None, date_from=None, date_to=None, 
                 file_base = DEFAULT_OUTPUT_DIR / base_name
 
             if len(transactions) == 0:
-                print("[transactions] No transactions found in date range", flush=True)
+                print("[transactions] No transactions found in date range", flush=True, file=sys.stderr)
 
             canonical = [_canonicalize_elba_transaction(tx) for tx in transactions if isinstance(tx, dict)]
 
@@ -1809,7 +1809,7 @@ def cmd_transactions(headless=True, account=None, date_from=None, date_to=None, 
             if fmt == "json":
                 out_file = file_base.with_suffix(".json")
                 out_file.write_text(json.dumps(wrapper, ensure_ascii=False, indent=2))
-                print(f"[transactions] Saved JSON: {out_file}")
+                print(f"[transactions] Saved JSON: {out_file}", file=sys.stderr)
             else:
                 import csv
 
@@ -1846,7 +1846,7 @@ def cmd_transactions(headless=True, account=None, date_from=None, date_to=None, 
                                 "paymentReference": refs.get("paymentReference"),
                             }
                         )
-                print(f"[transactions] Saved CSV: {out_file}")
+                print(f"[transactions] Saved CSV: {out_file}", file=sys.stderr)
 
         finally:
             context.close()
@@ -2102,12 +2102,12 @@ def canonicalize_depot_transactions_elba(payload: dict, depot_id: str, date_from
 def cmd_portfolio(headless=True, depot_id=None, as_of_date=None, json_output=False):
     """Fetch depot portfolio positions."""
     if not depot_id:
-        print("Missing required argument: --depot-id")
+        print("Missing required argument: --depot-id", file=sys.stderr)
         sys.exit(1)
 
     elba_id, pin = load_credentials()
     if not elba_id or not pin:
-        print("Credentials not found. Run 'setup' first.")
+        print("Credentials not found. Run 'setup' first.", file=sys.stderr)
         sys.exit(1)
 
     if not PROFILE_DIR.exists():
@@ -2123,7 +2123,7 @@ def cmd_portfolio(headless=True, depot_id=None, as_of_date=None, json_output=Fal
 
         page = context.new_page()
         try:
-            print("[portfolio] Attempting to access dashboard/documents (reuse session)...", flush=True)
+            print("[portfolio] Attempting to access dashboard/documents (reuse session)...", flush=True, file=sys.stderr)
             try:
                 page.goto(URL_DOCUMENTS, wait_until="domcontentloaded")
                 time.sleep(2)
@@ -2132,31 +2132,31 @@ def cmd_portfolio(headless=True, depot_id=None, as_of_date=None, json_output=Fal
 
             token = _get_bearer_token(context, page)
             if not token:
-                print("[portfolio] Token not found, performing login...", flush=True)
+                print("[portfolio] Token not found, performing login...", flush=True, file=sys.stderr)
                 if not login(page, elba_id, pin, timeout_seconds=LOGIN_TIMEOUT):
-                    print("[portfolio] Login failed.")
+                    print("[portfolio] Login failed.", file=sys.stderr)
                     sys.exit(1)
                 token = _get_bearer_token(context, page)
 
             if not token:
-                print("[portfolio] ERROR: Could not extract bearer token")
+                print("[portfolio] ERROR: Could not extract bearer token", file=sys.stderr)
                 sys.exit(1)
 
             cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
             payload, status_code = _fetch_portfolio_positions(token, cookies, str(depot_id), as_of_date)
 
             if status_code == 401:
-                print("[portfolio] Token rejected (401). Clearing cache and re-authenticating...", flush=True)
+                print("[portfolio] Token rejected (401). Clearing cache and re-authenticating...", flush=True, file=sys.stderr)
                 _clear_cached_token()
                 if not login(page, elba_id, pin, timeout_seconds=LOGIN_TIMEOUT):
-                    print("[portfolio] Login failed.")
+                    print("[portfolio] Login failed.", file=sys.stderr)
                     sys.exit(1)
                 token = _get_bearer_token(context, page)
                 cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
                 payload, status_code = _fetch_portfolio_positions(token, cookies, str(depot_id), as_of_date)
 
             if status_code != 200:
-                print("[portfolio] Failed to fetch portfolio", flush=True)
+                print("[portfolio] Failed to fetch portfolio", flush=True, file=sys.stderr)
                 print(json.dumps(payload, ensure_ascii=False, indent=2))
                 sys.exit(1)
 
