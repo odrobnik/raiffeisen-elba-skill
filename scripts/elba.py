@@ -2199,6 +2199,11 @@ def main():
     transactions_parser.add_argument("--format", dest="fmt", choices=["csv", "json"], default="json", help="Output format")
     transactions_parser.add_argument("--out", dest="output", help="Output file base or directory")
 
+    portfolio_parser = subparsers.add_parser("portfolio", help="Fetch depot portfolio positions")
+    portfolio_parser.add_argument("--depot-id", required=True, help="Depot ID (digits-only)")
+    portfolio_parser.add_argument("--as-of", dest="as_of_date", help="As-of date (YYYY-MM-DD, default: today)")
+    portfolio_parser.add_argument("--json", action="store_true", help="Output as JSON")
+
     args = parser.parse_args()
 
     global DEBUG_ENABLED
@@ -2225,6 +2230,13 @@ def main():
             date_to=getattr(args, 'date_to', None),
             output=getattr(args, 'output', None),
             fmt=getattr(args, 'fmt', "json")
+        )
+    elif args.command == "portfolio":
+        cmd_portfolio(
+            headless=not args.visible,
+            depot_id=getattr(args, 'depot_id', None),
+            as_of_date=getattr(args, 'as_of_date', None),
+            json_output=getattr(args, 'json', False)
         )
     else:
         parser.print_help()
