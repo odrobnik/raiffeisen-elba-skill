@@ -2191,6 +2191,114 @@ def cmd_portfolio(headless=True, depot_id=None, as_of_date=None, json_output=Fal
             context.close()
 
 
+def _split_depot_id(depot_id: str) -> tuple[str, str]:
+    """Split a digits-only depot ID into (bankleitzahl, depotnummer).
+
+    ELBA depot IDs are typically 13 digits: 5-digit BLZ + 8-digit depot number.
+    E.g. '3293966252586' -> ('32939', '66252586').
+    """
+    d = _digits(depot_id)
+    if len(d) == 13:
+        return d[:5], d[5:]
+    # Fallback: try to split at position 5
+    if len(d) > 5:
+        return d[:5], d[5:]
+    raise ValueError(f"Cannot split depot ID '{depot_id}' into BLZ + depot number")
+
+
+def cmd_depot_transactions(headless=True, depot_id=None, date_from=None, date_to=None, output=None, json_output=False):
+    """Fetch depot (portfolio) transactions."""
+    if not depot_id or not date_from or not date_to:
+        print("Missing required arguments: --depot-id, --from, --until", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        datetime.strptime(date_from, "%Y-%m-%d")
+        datetime.strptime(date_to, "%Y-%m-%d")
+    except ValueError:
+        print("ERROR: Dates must be in YYYY-MM-DD format.", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        blz, depnr = _split_depot_id(depot_id)
+    except ValueError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    elba_id, pin = load_credentials()
+    if not elba_id or not pin:
+        print("Credentials not found. Run 'setup' first.", file=sys.stderr)
+        sys.exit(1)
+
+    if not PROFILE_DIR.exists():
+        PROFILE_DIR.mkdir(parents=True)
+        _harden_path(PROFILE_DIR)
+
+    with sync_playwright() as p:
+        context = p.chromium.launch_persistent_context(
+            user_data_dir=str(PROFILE_DIR),
+            headless=headless,
+            viewport={"width": 1280, "height": 800},
+        )
+
+        page = context.new_page()
+        try:
+            print(f"[depot-tx] Fetching depot transactions for {blz}/{depnr} ({date_from} to {date_to})...", file=sys.stderr)
+            page.goto(URL_DOCUMENTS, wait_until="domcontentloaded")
+            time.sleep(2)
+
+            token = _get_bearer_token(context, page)
+            if not token:
+                print("[depot-tx] Token not found, performing login...", file=sys.stderr)
+                if not login(page, elba_id, pin, timeout_seconds=LOGIN_TIMEOUT):
+                    print("[depot-tx] Login failed.", file=sys.stderr)
+                    sys.exit(1)
+                token = _get_bearer_token(context, page)
+
+            if not token:
+                print("[depot-tx] ERROR: Could not extract bearer token", file=sys.stderr)
+                sys.exit(1)
+
+            cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
+            payload, status_code, raw_path = fetch_depot_transactions_api(token, cookies, blz, depnr, date_from, date_to)
+
+            if status_code == 401:
+                print("[depot-tx] Token rejected (401). Clearing cache and re-authenticating...", file=sys.stderr)
+                _clear_cached_token()
+                if not login(page, elba_id, pin, timeout_seconds=LOGIN_TIMEOUT):
+                    print("[depot-tx] Login failed.", file=sys.stderr)
+                    sys.exit(1)
+                token = _get_bearer_token(context, page)
+                cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
+                payload, status_code, raw_path = fetch_depot_transactions_api(token, cookies, blz, depnr, date_from, date_to)
+
+            if not isinstance(payload, dict) or payload.get("_error"):
+                print(f"[depot-tx] Failed to fetch depot transactions: {payload}", file=sys.stderr)
+                sys.exit(1)
+
+            canonical = canonicalize_depot_transactions_elba(payload, depot_id, date_from, date_to, raw_path=raw_path)
+
+            # Resolve output path
+            if output:
+                out_path = _safe_output_path(output, WORKSPACE_ROOT)
+                if out_path.is_dir() or str(output).endswith(os.sep):
+                    out_path.mkdir(parents=True, exist_ok=True)
+                    out_file = out_path / f"depot_transactions_{_safe_filename_component(depot_id)}_{date_from}_{date_to}.json"
+                else:
+                    out_path.parent.mkdir(parents=True, exist_ok=True)
+                    out_file = out_path
+                out_file.write_text(json.dumps(canonical, ensure_ascii=False, indent=2))
+                print(f"[depot-tx] Saved: {out_file}", file=sys.stderr)
+            else:
+                print(json.dumps(canonical, ensure_ascii=False, indent=2))
+
+            tx_count = len(canonical.get("transactions", []))
+            print(f"[depot-tx] {tx_count} transaction(s) found", file=sys.stderr)
+
+        finally:
+            context.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Raiffeisen ELBA Automation")
     # Global flags (keep ordering consistent with george.py)
@@ -2217,6 +2325,13 @@ def main():
     portfolio_parser.add_argument("--depot-id", required=True, help="Depot ID (digits-only)")
     portfolio_parser.add_argument("--as-of", dest="as_of_date", help="As-of date (YYYY-MM-DD, default: today)")
     portfolio_parser.add_argument("--json", action="store_true", help="Output as JSON")
+
+    depot_tx_parser = subparsers.add_parser("depot-transactions", help="Fetch depot (portfolio) transactions")
+    depot_tx_parser.add_argument("--depot-id", required=True, help="Depot ID (digits-only, e.g. 3293966252586)")
+    depot_tx_parser.add_argument("--from", dest="date_from", required=True, help="Start date (YYYY-MM-DD)")
+    depot_tx_parser.add_argument("--until", dest="date_to", required=True, help="End date (YYYY-MM-DD)")
+    depot_tx_parser.add_argument("--json", action="store_true", help="Output as JSON")
+    depot_tx_parser.add_argument("--out", dest="output", help="Output file or directory")
 
     args = parser.parse_args()
 
@@ -2250,6 +2365,15 @@ def main():
             headless=not args.visible,
             depot_id=getattr(args, 'depot_id', None),
             as_of_date=getattr(args, 'as_of_date', None),
+            json_output=getattr(args, 'json', False)
+        )
+    elif args.command == "depot-transactions":
+        cmd_depot_transactions(
+            headless=not args.visible,
+            depot_id=getattr(args, 'depot_id', None),
+            date_from=getattr(args, 'date_from', None),
+            date_to=getattr(args, 'date_to', None),
+            output=getattr(args, 'output', None),
             json_output=getattr(args, 'json', False)
         )
     else:
