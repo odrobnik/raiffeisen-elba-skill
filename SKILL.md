@@ -10,7 +10,6 @@ metadata:
     requires:
       bins: ["python3"]
       python: ["requests", "playwright"]
-      config: ["config.json"]
 ---
 
 # Raiffeisen ELBA Banking Automation

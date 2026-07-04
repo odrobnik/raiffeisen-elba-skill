@@ -234,6 +234,11 @@ def canonicalize_accounts_elba(accounts: list[dict], raw_path: Path | None = Non
         iban = a.get('iban')
         typ = _canonical_account_type_elba(a.get('type'))
 
+        # ELBA API occasionally emits placeholder products with no usable identity.
+        # Do not let those pollute canonical snapshots.
+        if str(name).strip().lower() == 'unknown' and str(iban or '').strip().lower() in {'', 'unknown'}:
+            continue
+
         currency = None
         # Determine currency from balance/value object
         for key in ('balance','available','value'):
