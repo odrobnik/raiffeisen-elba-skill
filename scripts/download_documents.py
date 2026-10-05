@@ -3,6 +3,7 @@
 Download all collected documents via API
 """
 import sys
+import argparse
 import json
 import re
 import requests
@@ -142,6 +143,13 @@ def download_document(doc, token, cookies, output_dir):
         return False
 
 def main():
+    parser = argparse.ArgumentParser(description="Download ELBA documents")
+    parser.add_argument("--profile", default="default", help="Profile to use")
+    args = parser.parse_args()
+
+    import elba
+    elba.set_active_profile(args.profile)
+
     # Check if we have the API response
     api_file = Path("elba_documents_api.json")
     if not api_file.exists():
@@ -165,17 +173,19 @@ def main():
         print("ERROR: Credentials not found")
         sys.exit(1)
     
-    if not PROFILE_DIR.exists():
-        PROFILE_DIR.mkdir(parents=True)
+    profile_dir = elba.PROFILE_DIR
+    
+    if not profile_dir.exists():
+        profile_dir.mkdir(parents=True)
         try:
             from elba import _harden_path
-            _harden_path(PROFILE_DIR)
+            _harden_path(profile_dir)
         except:
             pass
     
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
-            user_data_dir=str(PROFILE_DIR),
+            user_data_dir=str(profile_dir),
             headless=False,
             viewport={"width": 1280, "height": 800}
         )

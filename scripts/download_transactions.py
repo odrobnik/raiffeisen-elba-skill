@@ -296,6 +296,7 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description='Download ELBA transactions as CSV/JSON')
+    parser.add_argument('--profile', default='default', help='Profile to use')
     parser.add_argument('--list-accounts', action='store_true', help='List all accounts and exit')
     parser.add_argument('--iban', help='IBAN to fetch transactions for')
     parser.add_argument('--from', dest='date_from', help='Start date (YYYY-MM-DD)')
@@ -304,6 +305,11 @@ def main():
     parser.add_argument('--output', help='Output filename (without extension)')
     
     args = parser.parse_args()
+
+    # Initialize profile
+    if hasattr(args, "profile"):
+        import elba
+        elba.set_active_profile(args.profile)
     
     # Validate arguments
     if not args.list_accounts:
@@ -330,8 +336,11 @@ def main():
         print("ERROR: Credentials not found")
         sys.exit(1)
     
-    if not PROFILE_DIR.exists():
-        PROFILE_DIR.mkdir(parents=True)
+    import elba
+    profile_dir = elba.PROFILE_DIR
+    
+    if not profile_dir.exists():
+        profile_dir.mkdir(parents=True)
         try:
             from elba import _harden_path
             _harden_path(PROFILE_DIR)
@@ -340,7 +349,7 @@ def main():
     
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
-            user_data_dir=str(PROFILE_DIR),
+            user_data_dir=str(profile_dir),
             headless=False,
             viewport={"width": 1280, "height": 800}
         )

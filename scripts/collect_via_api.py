@@ -3,6 +3,7 @@
 Collect documents via API endpoint (much faster and more reliable)
 """
 import sys
+import argparse
 import time
 import json
 import requests
@@ -181,22 +182,32 @@ def collect_all_documents(token, cookies, from_date="2025-01-01", to_date="2025-
     return all_docs
 
 def main():
+    parser = argparse.ArgumentParser(description="Collect documents via API")
+    parser.add_argument("--profile", default="default", help="Profile to use")
+    args = parser.parse_args()
+
+    import elba
+    elba.set_active_profile(args.profile)
+
     elba_id, pin = load_credentials()
     if not elba_id or not pin:
         print("Credentials not found")
         sys.exit(1)
     
-    if not PROFILE_DIR.exists():
-        PROFILE_DIR.mkdir(parents=True)
+    # We need to get the updated PROFILE_DIR from elba
+    profile_dir = elba.PROFILE_DIR
+    
+    if not profile_dir.exists():
+        profile_dir.mkdir(parents=True)
         try:
             from elba import _harden_path
-            _harden_path(PROFILE_DIR)
+            _harden_path(profile_dir)
         except:
             pass
     
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
-            user_data_dir=str(PROFILE_DIR),
+            user_data_dir=str(profile_dir),
             headless=False,
             viewport={"width": 1280, "height": 800}
         )

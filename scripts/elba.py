@@ -118,9 +118,15 @@ WORKSPACE_ROOT = _find_workspace_root()
 CONFIG_DIR = WORKSPACE_ROOT / "raiffeisen-elba"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 STATE_ROOT = WORKSPACE_ROOT / "raiffeisen-elba"
-PROFILE_DIR = STATE_ROOT / ".pw-profile"
-SESSION_URL_FILE = PROFILE_DIR / "last_url.txt"
-TOKEN_CACHE_FILE = PROFILE_DIR / "token.json"
+
+def get_profile_dir(profile_name="default"):
+    if profile_name == "default":
+        return STATE_ROOT / ".pw-profile"
+    return STATE_ROOT / f".pw-profile-{profile_name}"
+
+PROFILE_DIR = get_profile_dir()
+SESSION_URL_FILE = None
+TOKEN_CACHE_FILE = None
 DEBUG_DIR = STATE_ROOT / "debug"
 
 # Ephemeral outputs (documents, canonical exports) go to /tmp by default.
@@ -131,10 +137,6 @@ DEFAULT_OUTPUT_DIR = _TMP_ROOT / "openclaw" / "elba"
 # Harden state directory permissions (best-effort)
 if STATE_ROOT.exists():
     _harden_path(STATE_ROOT)
-    if PROFILE_DIR.exists():
-        _harden_path(PROFILE_DIR)
-    if TOKEN_CACHE_FILE.exists():
-        _harden_path(TOKEN_CACHE_FILE)
 
 URL_LOGIN = "https://sso.raiffeisen.at/mein-login/identify"
 URL_DASHBOARD = "https://mein.elba.raiffeisen.at/bankingws-widgetsystem/meine-produkte/dashboard"
@@ -162,22 +164,55 @@ def _load_config() -> dict:
     return {}
 
 
-def load_credentials():
-    """Load credentials from config.json."""
+# Active profile state
+_ACTIVE_PROFILE = "default"
+
+def set_active_profile(profile_name):
+    global _ACTIVE_PROFILE, PROFILE_DIR, SESSION_URL_FILE, TOKEN_CACHE_FILE
+    _ACTIVE_PROFILE = profile_name
+    PROFILE_DIR = get_profile_dir(profile_name)
+    SESSION_URL_FILE = PROFILE_DIR / "last_url.txt"
+    TOKEN_CACHE_FILE = PROFILE_DIR / "token.json"
+
+def load_credentials(profile_name=None):
+    """Load credentials from config.json for the specified profile."""
+    if profile_name is None:
+        profile_name = _ACTIVE_PROFILE
+        
     cfg = _load_config()
-    elba_id = cfg.get("elba_id")
+    
+    # Try to load from specific profile
+    if profile_name != "default" and "profiles" in cfg:
+        profiles = cfg.get("profiles", {})
+        if profile_name in profiles:
+            prof = profiles[profile_name]
+            return prof.get("elba_id"), prof.get("pin")
+            
+    # Fallback to top-level if profile not found or default profile requested
+    elba_id = cfg.get("elba_id") 
     pin = cfg.get("pin")
     if elba_id and pin:
         return elba_id, pin
+        
     return None, None
 
-
-def get_institution_name() -> str:
+def get_institution_name(profile_name=None) -> str:
     """Return the institution name for canonical JSON output.
 
     Uses the 'alias' key from config.json if set, otherwise defaults to 'elba'.
     """
-    return _load_config().get("alias", "elba")
+    if profile_name is None:
+        profile_name = _ACTIVE_PROFILE
+        
+    cfg = _load_config()
+    if profile_name != "default" and "profiles" in cfg:
+        profiles = cfg.get("profiles", {})
+        if profile_name in profiles:
+            prof = profiles[profile_name]
+            if "alias" in prof:
+                return prof.get("alias")
+                
+    return cfg.get("alias", "elba")
 
 
 
@@ -2308,6 +2343,7 @@ def main():
     # Global flags (keep ordering consistent with george.py)
     parser.add_argument("--visible", action="store_true", help="Show browser")
     parser.add_argument("--login-timeout", type=int, default=DEFAULT_LOGIN_TIMEOUT, help="Seconds to wait for pushTAN approval (default: 300)")
+    parser.add_argument("--profile", default="default", help="Profile name to use (default: default)")
     parser.add_argument("--debug", action="store_true", help="Save bank-native payloads to workspace/raiffeisen-elba/debug (default: off)")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -2338,6 +2374,11 @@ def main():
     depot_tx_parser.add_argument("--out", dest="output", help="Output file or directory")
 
     args = parser.parse_args()
+
+    # Initialize profile state early based on --profile
+    profile_name = getattr(args, "profile", "default")
+    set_active_profile(profile_name)
+
 
     global DEBUG_ENABLED
     DEBUG_ENABLED = bool(getattr(args, "debug", False))
