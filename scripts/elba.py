@@ -469,16 +469,14 @@ def login(page, elba_id, pin, timeout_seconds: int | None = None):
         
         if "mein.elba.raiffeisen.at" in page.url:
             print("[login] Login successful!", file=sys.stderr)
-            
-            # Navigate to the full dashboard to ensure all cookies are set
-            print("[login] Loading products dashboard to establish session...", file=sys.stderr)
-            # domcontentloaded is usually enough; occasionally Playwright reports net::ERR_ABORTED
-            # even though the SPA is usable. Treat that as a warning and continue.
+
+            # Let ELBA finish its own post-pushTAN redirect. Forcing a dashboard
+            # navigation here can restart the SSO flow and invalidate approval.
             try:
-                page.goto(URL_DASHBOARD, wait_until="domcontentloaded", timeout=15000)
-            except Exception as e:
-                print(f"[login] WARNING: Dashboard navigation error: {e}", file=sys.stderr)
-            time.sleep(3)
+                page.wait_for_load_state("domcontentloaded", timeout=15000)
+            except Exception:
+                pass
+            time.sleep(5)
             
             # Verify we didn't get redirected back to login
             if "sso.raiffeisen.at" in page.url or "mein-login" in page.url:
@@ -941,21 +939,15 @@ def _get_bearer_token(context, page):
     try:
         start = time.time()
 
-        # Force a fresh navigation so the SPA triggers API calls (cache can short-circuit).
         try:
-            page.goto("about:blank", timeout=5000)
+            # Keep the approved ELBA page alive. Navigating away to about:blank
+            # can lose the SSO handoff before the token-bearing SPA requests fire.
+            if "mein.elba.raiffeisen.at" in page.url:
+                page.reload(wait_until="domcontentloaded", timeout=15000)
+            else:
+                page.goto(URL_DASHBOARD, wait_until="domcontentloaded", timeout=15000)
         except Exception:
             pass
-
-        try:
-            # networkidle is brittle for SPA apps; use domcontentloaded with a timeout.
-            page.goto(URL_DASHBOARD, wait_until="domcontentloaded", timeout=15000)
-        except Exception:
-            # If navigation fails, try a reload to trigger requests
-            try:
-                page.reload(wait_until="domcontentloaded", timeout=15000)
-            except Exception:
-                pass
 
         # Give it a moment for API calls to fire.
         time.sleep(3)
