@@ -28,38 +28,38 @@ This skill requires explicit 2FA approval on the user's mobile device (pushTAN).
 
 ## Setup & Configuration
 
-- **Profiles:** The user configuration is in `~/clawd/raiffeisen-elba/config.json`. Check this file to see available profiles if an ambiguous user is requested (e.g. `oliver` vs `chess`).
+See [SETUP.md](SETUP.md) for prerequisites and configuration.
+
+- **Profiles:** Credentials live in `<WORKSPACE_ROOT>/raiffeisen-elba/config.json`. If it has a `profiles` object, each key is a profile name; check which profiles exist when it is ambiguous which login the user means.
 - **Profile Argument:** If multiple profiles exist, pass `--profile <name>` to all ELBA commands. The argument must match the key in `config.json`.
 
 ## Commands
 
-**Entry point:** `python3 ~/Developer/Skills/raiffeisen-elba/scripts/elba.py`
+**Entry point:** `python3 {baseDir}/scripts/elba.py`
 
 ```bash
 # Authenticate (requires pushTAN approval)
-python3 ~/Developer/Skills/raiffeisen-elba/scripts/elba.py [--profile <name>] login
+python3 {baseDir}/scripts/elba.py [--profile <name>] login
 
 # List all accounts
-python3 ~/Developer/Skills/raiffeisen-elba/scripts/elba.py [--profile <name>] accounts [--json]
+python3 {baseDir}/scripts/elba.py [--profile <name>] accounts [--json]
 
-# Download transactions
+# Download transactions (--json prints to stdout; --out <file> writes a file instead)
 # Important: If the account ID/IBAN fails, check the exact ID string output by the `accounts` command. Some accounts have an internal ID rather than a pure IBAN.
-python3 ~/Developer/Skills/raiffeisen-elba/scripts/elba.py [--profile <name>] transactions --account <id|iban> --from YYYY-MM-DD --until YYYY-MM-DD [--json]
+python3 {baseDir}/scripts/elba.py [--profile <name>] transactions --account <id|iban> --from YYYY-MM-DD --until YYYY-MM-DD [--json]
 
 # Fetch depot portfolio positions
-python3 ~/Developer/Skills/raiffeisen-elba/scripts/elba.py [--profile <name>] portfolio --depot-id <id> [--json]
+python3 {baseDir}/scripts/elba.py [--profile <name>] portfolio --depot-id <id> [--json]
 
 # Clear session and cached token
-python3 ~/Developer/Skills/raiffeisen-elba/scripts/elba.py [--profile <name>] logout
+python3 {baseDir}/scripts/elba.py [--profile <name>] logout
 ```
 
-## Recommended Workflow for Archiving
+## Recommended Workflow
 
-1. Read `~/clawd/raiffeisen-elba/config.json` to find the correct profile name.
+1. Check `config.json` for the profile name if more than one login is configured.
 2. Run the `login` process using the `exec` and `process` tools to read the generated pushTAN code.
 3. Inform the user to approve the pushTAN on their device and wait for their confirmation.
-4. Once logged in, run `accounts --json` to get the list of accounts and exact account IDs. Save this snapshot if needed (e.g. `> /tmp/elba_accounts.json`).
-5. Run `transactions --account <exact-id-from-step-4> --from YYYY-MM-DD --until YYYY-MM-DD --json` and pipe the output to a temporary JSON file (e.g. `> /tmp/elba_tx.json`).
-6. **Import into Banker:** Import the saved JSON files into the consolidated banking archive. Ensure the archive directory targets the correct path (`--dir ~/clawd/banker`), and pass the explicit `--bank` parameter to maintain historical continuity (e.g., if the ELBA profile is `oliver`, but the existing banker archive uses `oliver@elba`, you must use `--bank oliver@elba`).
-   `python3 ~/Developer/Skills/banker/scripts/banker.py --dir ~/clawd/banker import --bank <existing-bank-name> /tmp/elba_accounts.json /tmp/elba_tx.json`
-7. Run `logout` to clear the session.
+4. Once logged in, run `accounts --json` to get the list of accounts and exact account IDs.
+5. Run `transactions --account <exact-id-from-step-4> --from YYYY-MM-DD --until YYYY-MM-DD --json` and redirect the output to a JSON file (e.g. `> /tmp/elba_tx.json`). Progress messages go to stderr, so the file contains only JSON.
+6. Run `logout` to clear the session.
