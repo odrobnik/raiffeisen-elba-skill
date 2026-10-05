@@ -14,7 +14,7 @@ clawhub install raiffeisen-elba --registry "https://auth.clawdhub.com"
 python3 scripts/elba.py login
 python3 scripts/elba.py logout
 python3 scripts/elba.py accounts
-python3 scripts/elba.py transactions --account <iban> --from YYYY-MM-DD --until YYYY-MM-DD
+python3 scripts/elba.py transactions --account <iban> --from YYYY-MM-DD --until YYYY-MM-DD --json
 ```
 
 ## Configuration
