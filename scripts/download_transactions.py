@@ -11,7 +11,7 @@ from pathlib import Path
 from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent))
-from elba import load_credentials, login, URL_DOCUMENTS, PROFILE_DIR, _get_bearer_token, _clear_cached_token, _safe_output_path, WORKSPACE_ROOT
+from elba import load_credentials, login, URL_DOCUMENTS, _get_bearer_token, _clear_cached_token, _safe_output_path, WORKSPACE_ROOT
 
 try:
     from playwright.sync_api import sync_playwright
@@ -343,7 +343,7 @@ def main():
         profile_dir.mkdir(parents=True)
         try:
             from elba import _harden_path
-            _harden_path(PROFILE_DIR)
+            _harden_path(profile_dir)
         except:
             pass
     

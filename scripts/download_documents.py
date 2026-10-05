@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from elba import load_credentials, login, URL_DOCUMENTS, PROFILE_DIR, _safe_output_path, _safe_download_filename, WORKSPACE_ROOT
+from elba import load_credentials, login, URL_DOCUMENTS, _safe_output_path, _safe_download_filename, WORKSPACE_ROOT
 
 try:
     from playwright.sync_api import sync_playwright
