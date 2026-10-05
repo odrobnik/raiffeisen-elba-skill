@@ -327,7 +327,7 @@ def main():
             sys.exit(1)
     
     # Default output filename
-    if not args.output:
+    if not args.output and not args.list_accounts:
         args.output = f"transactions_{args.iban.replace('AT', '')}_{args.date_from}_{args.date_to}"
     
     # Get credentials and login
