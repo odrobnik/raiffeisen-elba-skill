@@ -71,7 +71,7 @@ def extract_bearer_token(page):
     }""")
     
     if token:
-        print(f"[token] Found token in storage: {token[:20]}...", flush=True)
+        print("[token] Found token in storage", flush=True)
         return token
     
     print("[token] Token not found in storage, will extract from network requests", flush=True)
@@ -93,7 +93,7 @@ def get_bearer_token_from_context(context, page):
         auth_header = request.headers.get('authorization', '')
         if auth_header.startswith('Bearer '):
             captured_token['value'] = auth_header[7:]  # Remove 'Bearer ' prefix
-            print(f"[token] Captured from request: {captured_token['value'][:20]}...", flush=True)
+            print("[token] Captured from request", flush=True)
         route.continue_()
     
     page.route('**/api/**', handle_request)
@@ -236,7 +236,7 @@ def main():
                 print("[main] ERROR: Could not extract bearer token")
                 sys.exit(1)
             
-            print(f"[main] Using bearer token: {token[:20]}...", flush=True)
+            print("[main] Using bearer token", flush=True)
             
             # Get cookies from context
             cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}

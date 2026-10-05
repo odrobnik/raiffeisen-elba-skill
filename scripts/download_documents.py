@@ -60,7 +60,7 @@ def get_bearer_token_from_browser(page):
     }""")
     
     if token:
-        print(f"[token] Found token in storage: {token[:20]}...", flush=True)
+        print("[token] Found token in storage", flush=True)
         return token
     
     # If not found, capture from network request
@@ -71,7 +71,7 @@ def get_bearer_token_from_browser(page):
         auth_header = request.headers.get('authorization', '')
         if auth_header.startswith('Bearer '):
             captured_token['value'] = auth_header[7:]
-            print(f"[token] Captured from request: {captured_token['value'][:20]}...", flush=True)
+            print("[token] Captured from request", flush=True)
         route.continue_()
     
     page.route('**/api/**', handle_request)

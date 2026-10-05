@@ -869,7 +869,7 @@ def _extract_bearer_token(page):
     }""")
     
     if token:
-        print(f"[token] Found token in storage: {token[:20]}...", flush=True, file=sys.stderr)
+        print("[token] Found token in storage", flush=True, file=sys.stderr)
     return token
 
 def _load_cached_token():
@@ -947,7 +947,7 @@ def _get_bearer_token(context, page):
     
     token = _extract_bearer_token_from_storage_state(context)
     if token:
-        print(f"[token] Found token in storage state: {token[:20]}...", flush=True, file=sys.stderr)
+        print("[token] Found token in storage state", flush=True, file=sys.stderr)
         _save_cached_token(token)
         return token
     
@@ -963,7 +963,7 @@ def _get_bearer_token(context, page):
         auth_header = request.headers.get('authorization', '')
         if auth_header.startswith('Bearer '):
             captured_token['value'] = auth_header[7:]
-            print(f"[token] Captured: {captured_token['value'][:20]}...", flush=True, file=sys.stderr)
+            print("[token] Captured", flush=True, file=sys.stderr)
         route.continue_()
     
     # Hard time-limit the capture phase so we never hang here.
