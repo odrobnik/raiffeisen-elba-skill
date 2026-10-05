@@ -1722,8 +1722,11 @@ def _canonicalize_elba_transaction(tx: dict) -> dict:
     return out
 
 
-def cmd_transactions(headless=True, account=None, date_from=None, date_to=None, output=None, fmt="json"):
-    """Download transactions for an account (logs in automatically if needed)."""
+def cmd_transactions(headless=True, account=None, date_from=None, date_to=None, output=None, fmt="json", json_output=False):
+    """Download transactions for an account (logs in automatically if needed).
+
+    With json_output and no output path, the JSON is printed to stdout instead of written to a file.
+    """
     if not account or not date_from or not date_to:
         print("Missing required arguments: --account, --from, --until", file=sys.stderr)
         sys.exit(1)
@@ -1798,8 +1801,9 @@ def cmd_transactions(headless=True, account=None, date_from=None, date_to=None, 
                 raw_path = _write_debug_json("transactions-raw", transactions)
                 print(f"[debug] Raw transactions saved to: {raw_path}", file=sys.stderr)
 
-            # Resolve output base (even if there are 0 transactions)
+            # Resolve output base (even if there are 0 transactions); None means print JSON to stdout
             acc_clean = _safe_filename_component(account, default="account")
+            file_base = None
             if output:
                 out_path = _safe_output_path(output, WORKSPACE_ROOT)
                 if out_path.is_dir() or str(output).endswith(os.sep):
@@ -1810,7 +1814,7 @@ def cmd_transactions(headless=True, account=None, date_from=None, date_to=None, 
                     _safe_output_path(str(out_path.parent), WORKSPACE_ROOT)
                     out_path.parent.mkdir(parents=True, exist_ok=True)
                     file_base = out_path
-            else:
+            elif not json_output:
                 base_name = f"transactions_{acc_clean}_{date_from}_{date_to}"
                 DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
                 file_base = DEFAULT_OUTPUT_DIR / base_name
@@ -1832,7 +1836,10 @@ def cmd_transactions(headless=True, account=None, date_from=None, date_to=None, 
                 if raw_path:
                     wrapper["rawPath"] = str(raw_path)
 
-            if fmt == "json":
+            if file_base is None:
+                print(json.dumps(wrapper, ensure_ascii=False, indent=2))
+                print(f"[transactions] {len(canonical)} transaction(s) found", file=sys.stderr)
+            elif fmt == "json":
                 out_file = file_base.with_suffix(".json")
                 out_file.write_text(json.dumps(wrapper, ensure_ascii=False, indent=2))
                 print(f"[transactions] Saved JSON: {out_file}", file=sys.stderr)
@@ -2332,6 +2339,7 @@ def main():
     transactions_parser.add_argument("--until", dest="date_to", required=True, help="End date (YYYY-MM-DD)")
     transactions_parser.add_argument("--format", dest="fmt", choices=["csv", "json"], default="json", help="Output format")
     transactions_parser.add_argument("--out", dest="output", help="Output file base or directory")
+    transactions_parser.add_argument("--json", action="store_true", help="Output as JSON (to stdout unless --out is given)")
 
     portfolio_parser = subparsers.add_parser("portfolio", help="Fetch depot portfolio positions")
     portfolio_parser.add_argument("--depot-id", required=True, help="Depot ID (digits-only)")
@@ -2346,6 +2354,9 @@ def main():
     depot_tx_parser.add_argument("--out", dest="output", help="Output file or directory")
 
     args = parser.parse_args()
+
+    if args.command == "transactions" and args.json and args.fmt == "csv":
+        parser.error("transactions: --json cannot be combined with --format csv")
 
     global DEBUG_ENABLED
     DEBUG_ENABLED = bool(getattr(args, "debug", False))
@@ -2370,7 +2381,8 @@ def main():
             date_from=getattr(args, 'date_from', None),
             date_to=getattr(args, 'date_to', None),
             output=getattr(args, 'output', None),
-            fmt=getattr(args, 'fmt', "json")
+            fmt=getattr(args, 'fmt', "json"),
+            json_output=getattr(args, 'json', False)
         )
     elif args.command == "portfolio":
         cmd_portfolio(
